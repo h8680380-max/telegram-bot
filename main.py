@@ -6,7 +6,6 @@ from groq import Groq
 import httpx
 import os
 import asyncio
-import signal
 
 # =============================================
 # КЛЮЧИ — через переменные окружения Railway
@@ -349,7 +348,7 @@ async def handle_openrouter_photo(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text(full[i:i+4096], parse_mode='Markdown')
 
 # =============================================
-# ЗАПУСК С ИСПРАВЛЕНИЕМ КОНФЛИКТА
+# ЗАПУСК (исправленный)
 # =============================================
 async def post_init(app):
     await app.bot.set_my_commands([
@@ -379,7 +378,7 @@ async def post_init(app):
         BotCommand("table",        "📗 Таблица"),
     ])
 
-async def main_async():
+async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
     # Старые хендлеры
@@ -416,23 +415,10 @@ async def main_async():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_openrouter_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_openrouter_photo))
 
-    # Сбрасываем вебхук, чтобы не было конфликта
+    # Сбрасываем вебхук
     await app.bot.delete_webhook(drop_pending_updates=True)
     print("✅ Бот запущен, начинаем polling...")
     await app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
-def main():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    # Обработка SIGTERM для Railway
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: loop.stop())
-    try:
-        loop.run_until_complete(main_async())
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        print("Бот остановлен.")
-    finally:
-        loop.close()
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
