@@ -336,3 +336,169 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =============================================
+# ДОБАВИТЬ ПОСЛЕ СУЩЕСТВУЮЩИХ ИМПОРТОВ
+# =============================================
+
+# OpenRouter API настройки
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
+OPENROUTER_URL = "https://openrouter.ai/api/v1"
+
+# ТРИ бесплатные модели [citation:2][citation:5]
+OPENROUTER_MODELS = {
+    "deepseek": "deepseek/deepseek-chat-v3-0324:free",
+    "gemini": "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "gptoss": "openai/gpt-oss-120b:free"
+}
+
+# Названия для отображения
+MODEL_NAMES = {
+    "deepseek": "DeepSeek V3",
+    "gemini": "Gemini 2.0 Flash Lite",
+    "gptoss": "GPT-OSS 120B"
+}
+
+# Хранилище выбранной модели
+user_ai_openrouter = {}
+
+def get_openrouter_model(uid):
+    return user_ai_openrouter.get(uid, "deepseek")
+
+async def ask_openrouter(uid, message, system_prompt, image_url=None):
+    """Запрос к OpenRouter с поддержкой изображений"""
+    model_id = OPENROUTER_MODELS[get_openrouter_model(uid)]
+    
+    content = []
+    if message:
+        content.append({"type": "text", "text": message})
+    if image_url:
+        content.append({"type": "image_url", "image_url": {"url": image_url}})
+    
+    payload = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content if len(content) > 1 else message}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 4096
+    }
+    
+    if not image_url:
+        payload["messages"][1]["content"] = message
+    
+    try:
+        response = httpx.post(
+            f"{OPENROUTER_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=120.0
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result['choices'][0]['message']['content']
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            return "❌ Лимит запросов (20/мин). Подождите."
+        return f"❌ Ошибка API: {e}"
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+# =============================================
+# НОВЫЕ КОМАНДЫ (ТРИ МОДЕЛИ)
+# =============================================
+
+async def openrouter_deepseek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user_ai_openrouter[uid] = "deepseek"
+    await update.message.reply_text(f"✨ {MODEL_NAMES['deepseek']}\n💪 Код, математика, сложные задачи")
+
+async def openrouter_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user_ai_openrouter[uid] = "gemini"
+    await update.message.reply_text(f"⚡ {MODEL_NAMES['gemini']}\n🚀 Быстрая, 1M контекста")
+
+async def openrouter_gptoss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user_ai_openrouter[uid] = "gptoss"
+    await update.message.reply_text(f"🤖 {MODEL_NAMES['gptoss']}\n🏆 120B параметров, инструменты, structure output [citation:2]")
+
+async def handle_openrouter_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текстовых сообщений"""
+    uid = update.effective_user.id
+    user_message = update.message.text
+    current_model = get_openrouter_model(uid)
+    current_model_name = MODEL_NAMES[current_model]
+    
+    system_prompt = "Ты полезный ассистент. Отвечай на языке пользователя."
+    
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    reply = await ask_openrouter(uid, user_message, system_prompt)
+    
+    # Показываем какая модель ответила
+    full_reply = f"💬 *{current_model_name}*\n{reply}"
+    
+    for i in range(0, len(full_reply), 4096):
+        await update.message.reply_text(full_reply[i:i+4096], parse_mode='Markdown')
+
+async def handle_openrouter_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка фото с подписью или без"""
+    uid = update.effective_user.id
+    current_model = get_openrouter_model(uid)
+    current_model_name = MODEL_NAMES[current_model]
+    
+    photo_file = await update.message.photo[-1].get_file()
+    photo_url = photo_file.file_path
+    caption = update.message.caption or "Опиши что на этом изображении"
+    
+    system_prompt = "Ты ассистент с возможностью видеть. Анализируй изображения детально."
+    
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    reply = await ask_openrouter(uid, caption, system_prompt, image_url=photo_url)
+    
+    full_reply = f"🖼️ *{current_model_name}*\n{reply}"
+    
+    for i in range(0, len(full_reply), 4096):
+        await update.message.reply_text(full_reply[i:i+4096], parse_mode='Markdown')
+
+async def openrouter_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать текущую OpenRouter модель"""
+    uid = update.effective_user.id
+    current_model = get_openrouter_model(uid)
+    current_model_name = MODEL_NAMES[current_model]
+    
+    await update.message.reply_text(
+        f"🧠 Текущая OpenRouter модель: *{current_model_name}*\n\n"
+        f"Доступные команды:\n"
+        f"/deepseek - DeepSeek V3 (код/логика)\n"
+        f"/gemini - Gemini 2.0 Flash Lite (скорость/контекст)\n"
+        f"/gptoss - GPT-OSS 120B (инструменты/структуры)\n\n"
+        f"📸 Можно отправлять фото для анализа",
+        parse_mode='Markdown'
+    )
+
+# Команды для OpenRouter (ТРИ модели)
+app.add_handler(CommandHandler("deepseek", openrouter_deepseek))
+app.add_handler(CommandHandler("gemini", openrouter_gemini))
+app.add_handler(CommandHandler("gptoss", openrouter_gptoss))
+app.add_handler(CommandHandler("orstatus", openrouter_status))
+
+# Обработчики сообщений
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_openrouter_text))
+app.add_handler(MessageHandler(filters.PHOTO, handle_openrouter_photo))
