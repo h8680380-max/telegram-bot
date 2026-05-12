@@ -77,7 +77,7 @@ async def ask(uid, message, mode_override=None):
         for m in history[:-1]:
             role = "user" if m["role"] == "user" else "model"
             gemini_history.append({"role": role, "parts": [m["content"]]})
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system)
+        model = genai.GenerativeModel("gemini-2.0-flash", system_instruction=system)
         chat  = model.start_chat(history=gemini_history)
         reply = chat.send_message(message).text
     else:
