@@ -83,7 +83,7 @@ async def ask(uid, message, mode_override=None):
     else:
         messages = [{"role": "system", "content": system}] + history
         response = groq_client.chat.completions.create(
-            model="llama3.3-70b-versatile",
+            model="llama-3.3-70b-versatile",
             messages=messages,
             max_tokens=2048,
         )
