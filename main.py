@@ -1,7 +1,7 @@
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ChatAction
-import google.generativeai as genai
+from google import genai
 from groq import Groq
 import httpx
 import os
@@ -16,7 +16,7 @@ GROQ_API_KEY   = os.environ.get("GROQ_API_KEY",   "ВСТАВЬ_СЮДА")
 # =============================================
 # ИНИЦИАЛИЗАЦИЯ
 # =============================================
-genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 _http = httpx.Client(transport=httpx.HTTPTransport(proxy=None))
 groq_client = Groq(api_key=GROQ_API_KEY, http_client=_http)
 
@@ -76,10 +76,14 @@ async def ask(uid, message, mode_override=None):
         gemini_history = []
         for m in history[:-1]:
             role = "user" if m["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [m["content"]]})
-        model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=system)
-        chat  = model.start_chat(history=gemini_history)
-        reply = chat.send_message(message).text
+            gemini_history.append({"role": role, "parts": [{"text": m["content"]}]})
+        gemini_history.append({"role": "user", "parts": [{"text": message}]})
+        response = gemini_client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=gemini_history,
+            config={"system_instruction": system}
+        )
+        reply = response.text
     else:
         messages = [{"role": "system", "content": system}] + history
         response = groq_client.chat.completions.create(
