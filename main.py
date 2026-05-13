@@ -115,20 +115,25 @@ MODE_NAMES = {
 # ЗАПРОСЫ К ИИ
 # =============================================
 async def call_openrouter(messages, model_id):
+    import json
+    body = json.dumps(
+        {"model": model_id, "messages": messages, "max_tokens": 2048},
+        ensure_ascii=False
+    ).encode("utf-8")
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
                 "HTTP-Referer": "https://t.me",
                 "X-Title": "Telegram AI Bot",
             },
-            json={"model": model_id, "messages": messages, "max_tokens": 2048},
+            content=body,
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
-
+        
 async def ask(uid, message, mode_override=None):
     history = get_history(uid)
     system  = PROMPTS.get(mode_override or get_mode(uid), PROMPTS["default"])
