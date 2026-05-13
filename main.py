@@ -27,15 +27,15 @@ user_model   = {}
 # source: "openrouter" или "groq"
 # =============================================
 OR_MODELS = {
-    "groq":     ("groq",                                          "⚡ Groq Llama 3.3 70B",     "groq"),
-    "nvidia":   ("nvidia/nemotron-3-super-120b-a12b:free",        "🟢 NVIDIA Nemotron 120B",   "openrouter"),
-    "deepseek": ("deepseek/deepseek-r1:free",                     "🔍 DeepSeek R1",            "openrouter"),
-    "qwen":     ("qwen/qwen3-235b-a22b:free",                     "🌸 Qwen3 235B",             "openrouter"),
-    "mistral":  ("mistralai/mistral-small-3.1-24b-instruct:free", "🌬️ Mistral Small 3.1",     "openrouter"),
-    "llama":    ("meta-llama/llama-3.3-70b-instruct:free",        "🦙 Llama 3.3 70B",         "openrouter"),
-    "gemma":    ("google/gemma-3-27b-it:free",                    "💎 Gemma 3 27B",            "openrouter"),
-    "ring":     ("inclusionai/ring-2.6-1t:free",                  "💍 Ring 2.6 1T",            "openrouter"),
-    "owl":      ("openrouter/owl-alpha",                          "🦉 Owl Alpha",              "openrouter"),
+    "groq":      ("groq",                                          "⚡ Groq Llama 3.3 70B",    "groq"),
+    "nvidia":    ("nvidia/nemotron-3-super-120b-a12b:free",        "🟢 NVIDIA Nemotron 120B",  "openrouter"),
+    "deepseek":  ("deepseek/deepseek-r1:free",                     "🔍 DeepSeek R1",           "openrouter"),
+    "qwen":      ("qwen/qwen3-235b-a22b:free",                     "🌸 Qwen3 235B",            "openrouter"),
+    "mistral":   ("mistralai/mistral-small-3.1-24b-instruct:free", "🌬️ Mistral Small 3.1",    "openrouter"),
+    "llama":     ("meta-llama/llama-3.3-70b-instruct:free",        "🦙 Llama 3.3 70B",        "openrouter"),
+    "gemma":     ("google/gemma-3-27b-it:free",                    "💎 Gemma 3 27B",           "openrouter"),
+    "ring":      ("inclusionai/ring-2.6-1t:free",                  "💍 Ring 2.6 1T",           "openrouter"),
+    "owl":       ("openrouter/owl-alpha",                          "🦉 Owl Alpha",             "openrouter"),
 }
 
 DEFAULT_MODEL = "groq"
@@ -190,28 +190,10 @@ async def call_openrouter(messages, model_id):
         },
         method="POST"
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"]
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode()  # Пытаемся получить текст ошибки от OpenRouter
-        error_code = e.code
-        if error_code == 401:
-            return "Ошибка авторизации: проверьте ваш OpenRouter API ключ и настройки приватности (Model Training должен быть включен)."
-        elif error_code == 404:
-            # Это ключевой момент: модель не найдена
-            return f"Модель '{model_id}' не найдена. Возможно, идентификатор устарел. Проверьте список актуальных моделей на OpenRouter."
-        elif error_code == 429:
-            return "Превышен лимит запросов к OpenRouter. Бесплатные модели имеют ограничение 20 запросов в минуту и 200 в день."
-        elif error_code == 502:
-            return f"Провайдер модели '{model_id}' временно недоступен. Попробуйте позже или выберите другую модель."
-        else:
-            # Возвращаем детали ошибки для диагностики, но скрываем чувствительные данные
-            return f"Ошибка API OpenRouter (код {error_code}). Подробности в логах для разработчика."
-    except Exception as e:
-        return f"Сетевая ошибка при обращении к OpenRouter: {e}"
-        
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read())
+    return data["choices"][0]["message"]["content"]
+
 async def ask(uid, message, mode_override=None):
     history = get_history(uid)
     mode    = mode_override or get_mode(uid)
