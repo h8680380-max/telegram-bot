@@ -1,6 +1,7 @@
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ChatAction
+from groq import Groq
 import urllib.request
 import json
 import os
@@ -10,6 +11,9 @@ import os
 # =============================================
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN",     "ВСТАВЬ_СЮДА")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
+GROQ_API_KEY       = os.environ.get("GROQ_API_KEY",       "ВСТАВЬ_СЮДА")
+
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # =============================================
 # СОСТОЯНИЕ ПОЛЬЗОВАТЕЛЕЙ
@@ -19,20 +23,22 @@ user_history = {}
 user_model   = {}
 
 # =============================================
-# МОДЕЛИ OPENROUTER (все бесплатные, топ май 2026)
+# МОДЕЛИ
+# source: "openrouter" или "groq"
 # =============================================
 OR_MODELS = {
-    "nvidia":    ("nvidia/nemotron-3-super-120b-a12b:free",        "🟢 NVIDIA Nemotron 120B"),
-    "deepseek":  ("deepseek/deepseek-r1:free",                     "🔍 DeepSeek R1"),
-    "qwen":      ("qwen/qwen3-235b-a22b:free",                     "🌸 Qwen3 235B"),
-    "mistral":   ("mistralai/mistral-small-3.1-24b-instruct:free", "🌬️ Mistral Small 3.1"),
-    "llama":     ("meta-llama/llama-3.3-70b-instruct:free",        "🦙 Llama 3.3 70B"),
-    "gemma":     ("google/gemma-3-27b-it:free",                    "💎 Gemma 3 27B"),
-    "ring":      ("inclusionai/ring-2.6-1t:free",                  "💍 Ring 2.6 1T"),
-    "owl":       ("openrouter/owl-alpha",                          "🦉 Owl Alpha"),
+    "groq":      ("groq",                                          "⚡ Groq Llama 3.3 70B",    "groq"),
+    "nvidia":    ("nvidia/nemotron-3-super-120b-a12b:free",        "🟢 NVIDIA Nemotron 120B",  "openrouter"),
+    "deepseek":  ("deepseek/deepseek-r1:free",                     "🔍 DeepSeek R1",           "openrouter"),
+    "qwen":      ("qwen/qwen3-235b-a22b:free",                     "🌸 Qwen3 235B",            "openrouter"),
+    "mistral":   ("mistralai/mistral-small-3.1-24b-instruct:free", "🌬️ Mistral Small 3.1",    "openrouter"),
+    "llama":     ("meta-llama/llama-3.3-70b-instruct:free",        "🦙 Llama 3.3 70B",        "openrouter"),
+    "gemma":     ("google/gemma-3-27b-it:free",                    "💎 Gemma 3 27B",           "openrouter"),
+    "ring":      ("inclusionai/ring-2.6-1t:free",                  "💍 Ring 2.6 1T",           "openrouter"),
+    "owl":       ("openrouter/owl-alpha",                          "🦉 Owl Alpha",             "openrouter"),
 }
 
-DEFAULT_MODEL = "nvidia"
+DEFAULT_MODEL = "groq"
 
 # =============================================
 # ПРОМПТЫ
@@ -66,7 +72,7 @@ PROMPTS = {
         "Ты — талантливый копирайтер и редактор с опытом в SMM, журналистике и маркетинге. "
         "Пиши живо, с эмоциями, конкретикой и примерами. "
         "Избегай клише и канцелярита. "
-        "Структура: цепляющее начало → суть → призыв к действию. "
+        "Структура: цепляющее начало — суть — призыв к действию. "
         "Адаптируй стиль под задачу: пост в соцсети, статья, письмо, история — всё разное."
     ),
     "analyze": (
@@ -80,7 +86,7 @@ PROMPTS = {
     "image": (
         "Ты — эксперт по генерации изображений с глубоким знанием Midjourney, DALL-E 3, Stable Diffusion, Flux. "
         "Для каждого запроса создавай детальный промпт на английском: "
-        "субъект → стиль → освещение → цвета → камера/угол → настроение → качество. "
+        "субъект, стиль, освещение, цвета, камера/угол, настроение, качество. "
         "Добавляй технические параметры: --ar, --style, --v для Midjourney. "
         "Дополнительно давай краткое описание на русском что получится."
     ),
@@ -88,13 +94,13 @@ PROMPTS = {
         "Ты — эксперт по публичным выступлениям и бизнес-презентациям. "
         "Создавай структуры по принципу 'одна идея — один слайд'. "
         "Для каждого слайда: заголовок (до 7 слов) + 3-4 коротких тезиса + идея для визуала. "
-        "Начинай с проблемы аудитории, заканчивай чётким призывом к действию. "
+        "Начинай с проблемы аудитории, заканчивай четким призывом к действию. "
         "Используй принцип пирамиды Минто: главная мысль сначала."
     ),
     "excel": (
         "Ты — эксперт по Excel, Google Sheets и анализу данных. "
         "Объясняй формулы пошагово с примерами реальных данных. "
-        "Всегда показывай: формулу → что делает каждая часть → пример использования. "
+        "Всегда показывай: формулу, что делает каждая часть, пример использования. "
         "Для сложных задач предлагай несколько решений (формула / VBA / Power Query). "
         "Предупреждай о частых ошибках и как их избежать."
     ),
@@ -109,7 +115,7 @@ PROMPTS = {
         "Ты — гениальный учитель который умеет объяснить любую сложную вещь просто. "
         "Объясняй как будто человек слышит это впервые. "
         "Используй: аналогии из повседневной жизни, конкретные примеры, сравнения. "
-        "Структура: простое определение → аналогия → пример → почему это важно. "
+        "Структура: простое определение, аналогия, пример, почему это важно. "
         "Проверяй понимание в конце."
     ),
     "business": (
@@ -120,43 +126,43 @@ PROMPTS = {
         "Фокусируйся на ROI и практической реализации."
     ),
     "legal": (
-        "Ты — юридический консультант с широкими знаниями российского и международного права. "
+        "Ты — юридический консультант с широкими знаниями права. "
         "Объясняй законы и нормы понятным языком. "
         "Всегда указывай конкретные статьи и законы. "
         "Предупреждай о рисках и подводных камнях. "
         "Рекомендуй обратиться к профессиональному юристу для важных решений."
     ),
     "health": (
-        "Ты — медицинский консультант с обширными знаниями в области здоровья и медицины. "
+        "Ты — медицинский консультант с обширными знаниями в области здоровья. "
         "Давай информацию основанную на доказательной медицине. "
         "Объясняй симптомы, причины, методы лечения доступным языком. "
-        "Всегда рекомендуй консультацию с врачом для серьёзных вопросов. "
+        "Всегда рекомендуй консультацию с врачом для серьезных вопросов. "
         "Не ставь диагнозы — информируй."
     ),
 }
 
 MODE_NAMES = {
-    "default":      "🤖 Универсальный",
-    "code":         "💻 Программист",
-    "translate":    "🌍 Переводчик",
-    "write":        "✍️ Писатель",
-    "analyze":      "📊 Аналитик",
-    "image":        "🖼️ Промпты для картинок",
-    "presentation": "📋 Презентации",
-    "excel":        "📗 Excel/Таблицы",
-    "summarize":    "📝 Суммаризатор",
-    "explain":      "🧠 Объяснятор",
-    "business":     "💼 Бизнес",
-    "legal":        "⚖️ Юрист",
-    "health":       "🏥 Здоровье",
+    "default":      "Универсальный",
+    "code":         "Программист",
+    "translate":    "Переводчик",
+    "write":        "Писатель",
+    "analyze":      "Аналитик",
+    "image":        "Промпты для картинок",
+    "presentation": "Презентации",
+    "excel":        "Excel/Таблицы",
+    "summarize":    "Суммаризатор",
+    "explain":      "Объяснятор",
+    "business":     "Бизнес",
+    "legal":        "Юрист",
+    "health":       "Здоровье",
 }
 
 # =============================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =============================================
 
-def get_mode(uid):     return user_modes.get(uid, "default")
-def get_model(uid):    return user_model.get(uid, DEFAULT_MODEL)
+def get_mode(uid):  return user_modes.get(uid, "default")
+def get_model(uid): return user_model.get(uid, DEFAULT_MODEL)
 def get_history(uid):
     if uid not in user_history: user_history[uid] = []
     return user_history[uid]
@@ -168,18 +174,19 @@ async def send(update, text):
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
 
-async def call_openrouter(messages, model_key):
-    model_id = OR_MODELS[model_key][0]
+async def call_openrouter(messages, model_id):
+    body = json.dumps(
+        {"model": model_id, "messages": messages, "max_tokens": 2048},
+        ensure_ascii=False
+    ).encode("utf-8")
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
-        data=json.dumps({
-            "model": model_id,
-            "messages": messages,
-            "max_tokens": 2048,
-        }).encode(),
+        data=body,
         headers={
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
+            "HTTP-Referer": "https://t.me",
+            "X-Title": "Telegram AI Bot",
         },
         method="POST"
     )
@@ -192,6 +199,7 @@ async def ask(uid, message, mode_override=None):
     mode    = mode_override or get_mode(uid)
     system  = PROMPTS.get(mode, PROMPTS["default"])
     model   = get_model(uid)
+    source  = OR_MODELS[model][2]
 
     history.append({"role": "user", "content": message})
     if len(history) > 30:
@@ -199,7 +207,17 @@ async def ask(uid, message, mode_override=None):
         history = user_history[uid]
 
     messages = [{"role": "system", "content": system}] + history
-    reply = await call_openrouter(messages, model)
+
+    if source == "groq":
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            max_tokens=2048
+        )
+        reply = response.choices[0].message.content
+    else:
+        reply = await call_openrouter(messages, OR_MODELS[model][0])
+
     history.append({"role": "assistant", "content": reply})
     return reply
 
@@ -225,6 +243,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 ВСЕ КОМАНДЫ:\n\n"
         "━━━ 🧠 МОДЕЛИ ━━━\n"
         "/models — меню моделей\n"
+        "/groq — ⚡ Groq Llama 70B (быстрый, твой ключ)\n"
         "/nvidia — 🟢 NVIDIA Nemotron 120B\n"
         "/deepseek — 🔍 DeepSeek R1\n"
         "/qwen — 🌸 Qwen3 235B\n"
@@ -261,9 +280,11 @@ async def models_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     await update.message.reply_text(
         f"🤖 Текущая модель: {get_model_label(uid)}\n\n"
-        "━━━ Выбери модель (все бесплатно) ━━━\n\n"
+        "━━━ Выбери модель ━━━\n\n"
+        "/groq — ⚡ Groq Llama 3.3 70B\n"
+        "  Самый быстрый! Работает через твой Groq ключ\n\n"
         "/nvidia — 🟢 NVIDIA Nemotron 120B\n"
-        "  120B параметров, 1M контекст, топ для агентов\n\n"
+        "  120B параметров, топ для сложных задач\n\n"
         "/deepseek — 🔍 DeepSeek R1\n"
         "  Лучший для рассуждений и анализа\n\n"
         "/qwen — 🌸 Qwen3 235B\n"
@@ -292,13 +313,14 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_history[update.effective_user.id] = []
     await update.message.reply_text("🗑️ История очищена!")
 
-# — Переключение моделей —
+# Переключение моделей
 async def set_model_cmd(update, uid, key):
     user_model[uid] = key
     user_history[uid] = []
     name = OR_MODELS[key][1]
     await update.message.reply_text(f"{name} выбрана!\nИстория очищена.")
 
+async def set_groq(u, c):     await set_model_cmd(u, u.effective_user.id, "groq")
 async def set_nvidia(u, c):   await set_model_cmd(u, u.effective_user.id, "nvidia")
 async def set_deepseek(u, c): await set_model_cmd(u, u.effective_user.id, "deepseek")
 async def set_qwen(u, c):     await set_model_cmd(u, u.effective_user.id, "qwen")
@@ -308,7 +330,7 @@ async def set_gemma(u, c):    await set_model_cmd(u, u.effective_user.id, "gemma
 async def set_ring(u, c):     await set_model_cmd(u, u.effective_user.id, "ring")
 async def set_owl(u, c):      await set_model_cmd(u, u.effective_user.id, "owl")
 
-# — Режимы —
+# Режимы
 async def mode_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎭 Выбери режим:\n\n"
@@ -339,7 +361,7 @@ async def m_business(u, c):     await set_m(u, c, "business",      "💼 Реж�
 async def m_legal(u, c):        await set_m(u, c, "legal",         "⚖️ Режим: Юрист!")
 async def m_health(u, c):       await set_m(u, c, "health",        "🏥 Режим: Здоровье!")
 
-# — Инструменты —
+# Инструменты
 async def quick_cmd(update, context, prompt_mode, label, prefix=""):
     args = " ".join(context.args) if context.args else None
     if not args:
@@ -352,13 +374,13 @@ async def quick_cmd(update, context, prompt_mode, label, prefix=""):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
-async def cmd_image(u, c):   await quick_cmd(u, c, "image",    "image")
-async def cmd_sum(u, c):     await quick_cmd(u, c, "summarize","sum",     "Сожми этот текст: ")
-async def cmd_explain(u, c): await quick_cmd(u, c, "explain",  "explain", "Объясни просто: ")
-async def cmd_fix(u, c):     await quick_cmd(u, c, "write",    "fix",     "Исправь грамматику и пунктуацию, объясни ошибки: ")
-async def cmd_ideas(u, c):   await quick_cmd(u, c, "write",    "ideas",   "Придумай 10 творческих идей с пояснениями: ")
-async def cmd_pptx(u, c):    await quick_cmd(u, c, "presentation","pptx", "Создай структуру презентации 8-10 слайдов: ")
-async def cmd_table(u, c):   await quick_cmd(u, c, "excel",    "table",   "Создай таблицу в Markdown: ")
+async def cmd_image(u, c):   await quick_cmd(u, c, "image",        "image")
+async def cmd_sum(u, c):     await quick_cmd(u, c, "summarize",    "sum",     "Сожми этот текст: ")
+async def cmd_explain(u, c): await quick_cmd(u, c, "explain",      "explain", "Объясни просто: ")
+async def cmd_fix(u, c):     await quick_cmd(u, c, "write",        "fix",     "Исправь грамматику и пунктуацию, объясни ошибки: ")
+async def cmd_ideas(u, c):   await quick_cmd(u, c, "write",        "ideas",   "Придумай 10 творческих идей с пояснениями: ")
+async def cmd_pptx(u, c):    await quick_cmd(u, c, "presentation", "pptx",    "Создай структуру презентации 8-10 слайдов: ")
+async def cmd_table(u, c):   await quick_cmd(u, c, "excel",        "table",   "Создай таблицу в Markdown: ")
 
 async def cmd_story(u, c):
     args = " ".join(c.args) if c.args else None
@@ -396,6 +418,7 @@ async def post_init(app):
         BotCommand("mode",         "🎭 Сменить режим"),
         BotCommand("status",       "📍 Текущий статус"),
         BotCommand("clear",        "🗑️ Очистить историю"),
+        BotCommand("groq",         "⚡ Groq Llama 70B (быстрый)"),
         BotCommand("nvidia",       "🟢 NVIDIA Nemotron 120B"),
         BotCommand("deepseek",     "🔍 DeepSeek R1"),
         BotCommand("qwen",         "🌸 Qwen3 235B"),
@@ -422,7 +445,7 @@ async def post_init(app):
     ])
 
 def main():
-    print("🤖 Бот запускается...")
+    print("Бот запускается...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start",        start))
@@ -430,8 +453,7 @@ def main():
     app.add_handler(CommandHandler("models",       models_cmd))
     app.add_handler(CommandHandler("status",       status))
     app.add_handler(CommandHandler("clear",        clear))
-
-    # Модели
+    app.add_handler(CommandHandler("groq",         set_groq))
     app.add_handler(CommandHandler("nvidia",       set_nvidia))
     app.add_handler(CommandHandler("deepseek",     set_deepseek))
     app.add_handler(CommandHandler("qwen",         set_qwen))
@@ -440,8 +462,6 @@ def main():
     app.add_handler(CommandHandler("gemma",        set_gemma))
     app.add_handler(CommandHandler("ring",         set_ring))
     app.add_handler(CommandHandler("owl",          set_owl))
-
-    # Режимы
     app.add_handler(CommandHandler("mode",         mode_menu))
     app.add_handler(CommandHandler("default",      m_default))
     app.add_handler(CommandHandler("code",         m_code))
@@ -453,8 +473,6 @@ def main():
     app.add_handler(CommandHandler("business",     m_business))
     app.add_handler(CommandHandler("legal",        m_legal))
     app.add_handler(CommandHandler("health",       m_health))
-
-    # Инструменты
     app.add_handler(CommandHandler("image",        cmd_image))
     app.add_handler(CommandHandler("story",        cmd_story))
     app.add_handler(CommandHandler("sum",          cmd_sum))
@@ -463,10 +481,9 @@ def main():
     app.add_handler(CommandHandler("explain",      cmd_explain))
     app.add_handler(CommandHandler("pptx",         cmd_pptx))
     app.add_handler(CommandHandler("table",        cmd_table))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("✅ Бот запущен!")
+    print("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
