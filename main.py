@@ -4,20 +4,19 @@ from telegram.constants import ChatAction
 from groq import Groq
 import httpx
 import base64
-import json
 import os
- 
+
 # =============================================
-# КЛЮЧИ — вставь через Railway Variables
+# КЛЮЧИ
 # =============================================
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN",     "ВСТАВЬ_СЮДА")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
 GROQ_API_KEY       = os.environ.get("GROQ_API_KEY",       "ВСТАВЬ_СЮДА")
- 
+
 groq_client = Groq(api_key=GROQ_API_KEY)
- 
+
 # =============================================
-# МОДЕЛИ (все проверены — бесплатные на май 2026)
+# МОДЕЛИ
 # (source, model_id, label, company, vision, description)
 # =============================================
 MODELS = {
@@ -35,7 +34,7 @@ MODELS = {
         "💎 Gemma 4 27B",
         "Google",
         True,
-        "Новая модель Google. Поддерживает фото 📸"
+        "Новая модель Google. Поддерживает фото"
     ),
     "qwen": (
         "openrouter",
@@ -43,7 +42,7 @@ MODELS = {
         "👁️ Nemotron VL 12B",
         "NVIDIA",
         True,
-        "Визуальная модель NVIDIA. Поддерживает фото 📸"
+        "Визуальная модель NVIDIA. Поддерживает фото"
     ),
     "gpt": (
         "openrouter",
@@ -59,43 +58,43 @@ MODELS = {
         "⚡ Nemotron Super 120B",
         "NVIDIA",
         False,
-        "Огромная модель 120B. Очень умная, для сложных задач"
+        "Огромная модель 120B. Для сложных задач"
     ),
 }
- 
+
 def src(k):  return MODELS[k][0]
 def mid(k):  return MODELS[k][1]
 def lbl(k):  return MODELS[k][2]
 def comp(k): return MODELS[k][3]
 def vis(k):  return MODELS[k][4]
 def desc(k): return MODELS[k][5]
- 
+
 user_ai      = {}
 user_modes   = {}
 user_history = {}
- 
+
 def get_ai(uid):   return user_ai.get(uid, "groq")
 def get_mode(uid): return user_modes.get(uid, "default")
 def get_history(uid):
     if uid not in user_history: user_history[uid] = []
     return user_history[uid]
- 
+
 # =============================================
-# СИСТЕМНЫЕ ПРОМПТЫ (без эмодзи — во избежание ошибок кодировки)
+# ПРОМПТЫ
 # =============================================
 PROMPTS = {
-    "default":      "Ты - умный универсальный ассистент. Отвечай на языке пользователя. Будь конкретным и полезным.",
-    "code":         "Ты - Senior разработчик. Пиши чистый код с комментариями. Объясняй почему, а не только как. Указывай язык в блоках кода. Предлагай лучшие практики.",
-    "translate":    "Ты - профессиональный переводчик. Переводи естественно, не дословно. Сохраняй стиль оригинала.",
-    "write":        "Ты - талантливый копирайтер. Пиши живо, с эмоциями и конкретикой. Избегай клише и канцелярита.",
-    "analyze":      "Ты - аналитик-эксперт. Структура ответа: суть -> анализ -> факты -> выводы -> рекомендации.",
-    "image":        "Ты - эксперт по промптам для Midjourney/DALL-E/Stable Diffusion. Детальные промпты на английском + описание на русском.",
-    "presentation": "Ты - эксперт по презентациям. Одна идея - один слайд. Заголовок до 7 слов + 3-4 тезиса + идея для визуала.",
-    "excel":        "Ты - эксперт по Excel и Google Sheets. Формулы с примерами, объясняй каждую часть.",
-    "summarize":    "Ты - эксперт по сжатию информации. Суть в 1-2 предложениях -> ключевые тезисы -> вывод.",
-    "explain":      "Ты - гениальный учитель. Объясняй через аналогии из жизни. Простое определение -> аналогия -> пример -> почему важно.",
+    "default":      "You are a smart universal assistant. Always reply in the user's language. Be concrete and helpful.",
+    "code":         "You are a Senior developer. Write clean code with comments. Explain why, not just how. Always specify language in code blocks. Suggest best practices.",
+    "translate":    "You are a professional translator. Translate naturally, not word-for-word. Preserve the original style.",
+    "write":        "You are a talented copywriter. Write vividly with emotions and specifics. Avoid cliches.",
+    "analyze":      "You are an expert analyst. Structure: essence -> analysis -> facts -> conclusions -> recommendations.",
+    "image":        "You are an expert in prompts for Midjourney/DALL-E/Stable Diffusion. Detailed prompts in English + description in the user's language.",
+    "presentation": "You are a presentation expert. One idea per slide. Title up to 7 words + 3-4 points + visual idea.",
+    "excel":        "You are an Excel and Google Sheets expert. Formulas with examples, explain each part.",
+    "summarize":    "You are an expert at compressing information. Structure: essence in 1-2 sentences -> key points -> conclusion.",
+    "explain":      "You are a brilliant teacher. Explain through life analogies. Simple definition -> analogy -> example -> why it matters.",
 }
- 
+
 MODE_NAMES = {
     "default": "Универсальный", "code": "Программист",
     "translate": "Переводчик",  "write": "Писатель",
@@ -103,41 +102,37 @@ MODE_NAMES = {
     "presentation": "Презентации", "excel": "Excel",
     "summarize": "Суммаризатор", "explain": "Объяснятор",
 }
- 
+
 # =============================================
 # ЗАПРОСЫ К ИИ
 # =============================================
 async def call_openrouter(messages, model_id):
-    body = json.dumps(
-        {"model": model_id, "messages": messages, "max_tokens": 2048},
-        ensure_ascii=False
-    ).encode("utf-8")
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json; charset=utf-8",
+                "Content-Type": "application/json",
                 "HTTP-Referer": "https://t.me",
                 "X-Title": "Telegram AI Bot",
             },
-            content=body,
+            json={"model": model_id, "messages": messages, "max_tokens": 2048},
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
- 
+
 async def ask(uid, message, mode_override=None):
     history = get_history(uid)
     system  = PROMPTS.get(mode_override or get_mode(uid), PROMPTS["default"])
     ai      = get_ai(uid)
- 
+
     history.append({"role": "user", "content": message})
     if len(history) > 20:
         user_history[uid] = history[-20:]
         history = user_history[uid]
- 
+
     messages = [{"role": "system", "content": system}] + history
- 
+
     if src(ai) == "groq":
         response = groq_client.chat.completions.create(
             model=mid(ai), messages=messages, max_tokens=2048
@@ -145,29 +140,29 @@ async def ask(uid, message, mode_override=None):
         reply = response.choices[0].message.content
     else:
         reply = await call_openrouter(messages, mid(ai))
- 
+
     history.append({"role": "assistant", "content": reply})
     return reply
- 
+
 async def ask_with_photo(uid, caption, photo_b64):
-    ai      = get_ai(uid)
-    system  = PROMPTS.get(get_mode(uid), PROMPTS["default"])
+    ai     = get_ai(uid)
+    system = PROMPTS.get(get_mode(uid), PROMPTS["default"])
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{photo_b64}"}},
-            {"type": "text", "text": caption or "Опиши подробно что на этом изображении."}
+            {"type": "text", "text": caption or "Describe this image in detail."}
         ]}
     ]
     reply = await call_openrouter(messages, mid(ai))
     get_history(uid).append({"role": "user",      "content": caption or "[фото]"})
     get_history(uid).append({"role": "assistant", "content": reply})
     return reply
- 
+
 async def send(update, text):
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
- 
+
 # =============================================
 # КОМАНДЫ
 # =============================================
@@ -185,21 +180,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/models — выбрать модель\n"
         "/help — все команды"
     )
- 
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 ВСЕ КОМАНДЫ:\n\n"
         "━━━ 🤖 МОДЕЛИ ━━━\n"
         "/models — список и выбор\n"
-        "/groq — 🦙 Llama 70B через Groq (быстро)\n"
-        "/llama — 🦙 Llama 70B через OpenRouter\n"
+        "/groq — 🦙 Llama 70B Groq (быстро)\n"
         "/gemma — 💎 Gemma 4 27B Google 📸\n"
         "/qwen — 👁️ Nemotron VL NVIDIA 📸\n"
         "/gpt — 💬 GPT OSS 20B OpenAI\n"
         "/nvidia — ⚡ Nemotron Super 120B\n\n"
         "━━━ 📸 АНАЛИЗ ФОТО ━━━\n"
         "Просто отправь фото с подписью или без!\n"
-        "Поддерживают: Gemma, Nemotron VL\n\n"
+        "Поддерживают: /gemma и /qwen\n\n"
         "━━━ 🎭 РЕЖИМЫ ━━━\n"
         "/mode — меню режимов\n"
         "/default — 🤖 Универсальный\n"
@@ -223,18 +217,18 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — текущий статус\n"
         "/clear — очистить историю\n"
     )
- 
+
 async def models_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ai  = get_ai(uid)
     text = f"🤖 Сейчас: {lbl(ai)}\n\n━━━ Выбери модель ━━━\n\n"
     for key, m in MODELS.items():
         active   = "✅" if key == ai else "○"
-        vis_icon = "📸" if m[4] else "🚫📸"
+        vis_icon = "📸" if m[4] else ""
         text += f"{active} /{key} — {m[2]} {vis_icon}\n"
         text += f"   └ {m[3]} · {m[5]}\n\n"
     await send(update, text)
- 
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ai  = get_ai(uid)
@@ -246,11 +240,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎭 Режим: {MODE_NAMES.get(get_mode(uid))}\n"
         f"💬 Сообщений в памяти: {len(get_history(uid))}"
     )
- 
+
 async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_history[update.effective_user.id] = []
     await update.message.reply_text("🗑️ История очищена!")
- 
+
 async def switch_ai(update, uid, key):
     user_ai[uid] = key
     user_history[uid] = []
@@ -258,13 +252,13 @@ async def switch_ai(update, uid, key):
     await update.message.reply_text(
         f"{lbl(key)}\n🏢 {comp(key)}\n{v}\n\nℹ️ {desc(key)}\n\nИстория очищена."
     )
- 
+
 async def set_groq(u,c):   await switch_ai(u, u.effective_user.id, "groq")
 async def set_gemma(u,c):  await switch_ai(u, u.effective_user.id, "gemma")
 async def set_qwen(u,c):   await switch_ai(u, u.effective_user.id, "qwen")
 async def set_gpt(u,c):    await switch_ai(u, u.effective_user.id, "gpt")
 async def set_nvidia(u,c): await switch_ai(u, u.effective_user.id, "nvidia")
- 
+
 async def mode_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎭 Выбери режим:\n\n"
@@ -276,11 +270,11 @@ async def mode_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/presentation — 📋 Презентации\n"
         "/excel — 📗 Excel\n"
     )
- 
+
 async def set_m(u, c, mode, text):
     user_modes[u.effective_user.id] = mode
     await u.message.reply_text(text)
- 
+
 async def m_default(u,c):      await set_m(u,c,"default",      "🤖 Универсальный режим!")
 async def m_code(u,c):         await set_m(u,c,"code",          "💻 Режим: Программист!")
 async def m_translate(u,c):    await set_m(u,c,"translate",     "🌍 Режим: Переводчик!")
@@ -288,7 +282,7 @@ async def m_write(u,c):        await set_m(u,c,"write",         "✍️ Режи
 async def m_analyze(u,c):      await set_m(u,c,"analyze",       "📊 Режим: Аналитик!")
 async def m_presentation(u,c): await set_m(u,c,"presentation",  "📋 Режим: Презентации!")
 async def m_excel(u,c):        await set_m(u,c,"excel",         "📗 Режим: Excel!")
- 
+
 async def quick_cmd(update, context, mode, label, prefix=""):
     args = " ".join(context.args) if context.args else None
     if not args:
@@ -299,7 +293,7 @@ async def quick_cmd(update, context, mode, label, prefix=""):
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
- 
+
 async def cmd_image(u,c):   await quick_cmd(u,c,"image","image")
 async def cmd_sum(u,c):     await quick_cmd(u,c,"summarize","sum",    "Сожми этот текст: ")
 async def cmd_explain(u,c): await quick_cmd(u,c,"explain","explain",  "Объясни просто: ")
@@ -307,38 +301,37 @@ async def cmd_fix(u,c):     await quick_cmd(u,c,"write","fix",        "Испр�
 async def cmd_ideas(u,c):   await quick_cmd(u,c,"write","ideas",      "Придумай 10 идей с пояснениями: ")
 async def cmd_pptx(u,c):    await quick_cmd(u,c,"presentation","pptx","Структура презентации 8-10 слайдов: ")
 async def cmd_table(u,c):   await quick_cmd(u,c,"excel","table",      "Создай таблицу в Markdown: ")
- 
+
 async def cmd_story(u,c):
     args = " ".join(c.args) if c.args else None
     if not args: await u.message.reply_text("Использование: /story <тема>"); return
     await c.bot.send_chat_action(chat_id=u.effective_chat.id, action=ChatAction.TYPING)
     try:
         reply = await ask(u.effective_user.id,
-            f"Напиши увлекательную историю (400-600 слов) с живыми персонажами и неожиданным финалом: {args}",
+            f"Write an engaging story (400-600 words) with vivid characters and unexpected ending: {args}",
             mode_override="write")
         await send(u, reply)
     except Exception as e:
         await u.message.reply_text(f"❌ Ошибка: {e}")
- 
+
 async def cmd_gif(u,c):
     args = " ".join(c.args) if c.args else None
     if not args: await u.message.reply_text("Использование: /gif <идея>"); return
     await c.bot.send_chat_action(chat_id=u.effective_chat.id, action=ChatAction.TYPING)
     try:
         reply = await ask(u.effective_user.id,
-            f"Опиши детально GIF-анимацию покадрово: {args}. Стиль, цвета, промпт на английском.",
+            f"Describe a GIF animation frame by frame: {args}. Style, colors, English prompt.",
             mode_override="image")
         await send(u, reply)
     except Exception as e:
         await u.message.reply_text(f"❌ Ошибка: {e}")
- 
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ai  = get_ai(uid)
     if not vis(ai):
         await update.message.reply_text(
             f"🚫 {lbl(ai)} не поддерживает анализ фото.\n\n"
-            f"ℹ️ Эта модель работает только с текстом — это особенность её архитектуры.\n\n"
             "Для анализа фото переключись:\n"
             "/gemma — 💎 Gemma 4 27B\n"
             "/qwen — 👁️ Nemotron VL 12B"
@@ -354,7 +347,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при анализе фото: {e}")
- 
+
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
@@ -362,7 +355,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}\nПопробуй /clear или смени модель через /models")
- 
+
 # =============================================
 # ЗАПУСК
 # =============================================
@@ -393,11 +386,11 @@ async def post_init(app):
         BotCommand("pptx",         "Структура презентации"),
         BotCommand("table",        "Создать таблицу"),
     ])
- 
+
 def main():
     print("Бот запускается...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
- 
+
     app.add_handler(CommandHandler("start",        start))
     app.add_handler(CommandHandler("help",         help_cmd))
     app.add_handler(CommandHandler("models",       models_cmd))
@@ -427,10 +420,9 @@ def main():
     app.add_handler(CommandHandler("table",        cmd_table))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
- 
+
     print("Бот запущен!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
- 
+
 if __name__ == "__main__":
     main()
- 
