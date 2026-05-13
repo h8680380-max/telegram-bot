@@ -456,4 +456,45 @@ def main():
     app.add_handler(CommandHandler("start",        start))
     app.add_handler(CommandHandler("help",         help_cmd))
     app.add_handler(CommandHandler("models",       models_cmd))
-    app.add_handler(Co
+    app.add_handler(CommandHandler("status",       status))
+    app.add_handler(CommandHandler("clear",        clear))
+
+    # Модели
+    app.add_handler(CommandHandler("gemini",       set_gemini))
+    app.add_handler(CommandHandler("groq",         set_groq))
+    app.add_handler(CommandHandler("llama",        set_llama))
+    app.add_handler(CommandHandler("deepseek",     set_deepseek))
+    app.add_handler(CommandHandler("mistral",      set_mistral))
+    app.add_handler(CommandHandler("qwen",         set_qwen))
+    app.add_handler(CommandHandler("gemma",        set_gemma))
+
+    # Режимы
+    app.add_handler(CommandHandler("mode",         mode_menu))
+    app.add_handler(CommandHandler("default",      m_default))
+    app.add_handler(CommandHandler("code",         m_code))
+    app.add_handler(CommandHandler("translate",    m_translate))
+    app.add_handler(CommandHandler("write",        m_write))
+    app.add_handler(CommandHandler("analyze",      m_analyze))
+    app.add_handler(CommandHandler("presentation", m_presentation))
+    app.add_handler(CommandHandler("excel",        m_excel))
+    app.add_handler(CommandHandler("business",     m_business))
+    app.add_handler(CommandHandler("legal",        m_legal))
+    app.add_handler(CommandHandler("health",       m_health))
+
+    # Инструменты
+    app.add_handler(CommandHandler("image",        cmd_image))
+    app.add_handler(CommandHandler("story",        cmd_story))
+    app.add_handler(CommandHandler("sum",          cmd_sum))
+    app.add_handler(CommandHandler("fix",          cmd_fix))
+    app.add_handler(CommandHandler("ideas",        cmd_ideas))
+    app.add_handler(CommandHandler("explain",      cmd_explain))
+    app.add_handler(CommandHandler("pptx",         cmd_pptx))
+    app.add_handler(CommandHandler("table",        cmd_table))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+    print("✅ Бот запущен!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    main()
