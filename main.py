@@ -1,46 +1,98 @@
-
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ChatAction
+from groq import Groq
 import httpx
 import base64
 import os
 
 # =============================================
-# КЛЮЧИ
+# КЛЮЧИ — вставь через Railway Variables
 # =============================================
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN",     "ВСТАВЬ_СЮДА")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
+GROQ_API_KEY       = os.environ.get("GROQ_API_KEY",       "ВСТАВЬ_СЮДА")
+
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # =============================================
 # МОДЕЛИ
+# (source, model_id, label, company, vision, description)
 # =============================================
 MODELS = {
-    "chatgpt":  ("openai/gpt-4o-mini:free",                "💬 ChatGPT 4o Mini",  "OpenAI",   True),
-    "deepseek": ("deepseek/deepseek-chat-v3-0324:free",    "🔍 DeepSeek V3",      "DeepSeek", False),
-    "gemini":   ("google/gemini-2.0-flash-exp:free",       "✨ Gemini 2.0 Flash", "Google",   True),
-    "llama":    ("meta-llama/llama-3.3-70b-instruct:free", "🦙 Llama 3.3 70B",   "Meta",     False),
+    "gemini": (
+        "openrouter",
+        "google/gemini-2.0-flash-exp:free",
+        "✨ Gemini 2.0 Flash",
+        "Google",
+        True,
+        "Быстрый и умный. Уровень GPT-4o mini. Поддерживает фото 📸"
+    ),
+    "deepseek": (
+        "openrouter",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "🔍 DeepSeek V3",
+        "DeepSeek",
+        False,
+        "Уровень GPT-4o. Отлично для текстов и анализа. Фото не поддерживает"
+    ),
+    "deepseek_r1": (
+        "openrouter",
+        "deepseek/deepseek-r1:free",
+        "🔬 DeepSeek R1",
+        "DeepSeek",
+        False,
+        "Аналог ChatGPT o1 — думает перед ответом. Лучший для логики и математики. Фото не поддерживает"
+    ),
+    "llama": (
+        "groq",
+        "llama-3.3-70b-versatile",
+        "🦙 Llama 3.3 70B",
+        "Meta (Groq)",
+        False,
+        "Уровень GPT-4. Быстрый через Groq. Лучший для кода. Фото не поддерживает"
+    ),
+    "qwen": (
+        "openrouter",
+        "qwen/qwen2.5-vl-72b-instruct:free",
+        "👁️ Qwen2.5 VL 72B",
+        "Alibaba",
+        True,
+        "Мощная модель с анализом фото 📸. Хороша для визуальных задач"
+    ),
+    "mistral": (
+        "openrouter",
+        "mistralai/mistral-7b-instruct:free",
+        "💨 Mistral 7B",
+        "Mistral",
+        False,
+        "Лёгкая и быстрая. Для простых задач и переводов. Фото не поддерживает"
+    ),
 }
-# MODELS[key] = (model_id, label, company, supports_vision)
+
+def src(key):     return MODELS[key][0]
+def mid(key):     return MODELS[key][1]
+def label(key):   return MODELS[key][2]
+def company(key): return MODELS[key][3]
+def vision(key):  return MODELS[key][4]
+def desc(key):    return MODELS[key][5]
 
 user_ai      = {}
 user_modes   = {}
 user_history = {}
 
-def get_ai(uid):    return user_ai.get(uid, "chatgpt")
-def get_mode(uid):  return user_modes.get(uid, "default")
+def get_ai(uid):   return user_ai.get(uid, "gemini")
+def get_mode(uid): return user_modes.get(uid, "default")
 def get_history(uid):
     if uid not in user_history: user_history[uid] = []
     return user_history[uid]
-def get_ai_label(uid): return MODELS[get_ai(uid)][1]
-def supports_vision(uid): return MODELS[get_ai(uid)][3]
 
 # =============================================
-# ПРОМПТЫ
+# СИСТЕМНЫЕ ПРОМПТЫ
 # =============================================
 PROMPTS = {
     "default":      "Ты — умный универсальный ассистент. Отвечай на языке пользователя. Будь конкретным и полезным.",
-    "code":         "Ты — Senior разработчик. Пиши чистый код с комментариями на русском. Объясняй почему, а не только как. Указывай язык в блоках кода. Предлагай лучшие практики.",
+    "code":         "Ты — Senior разработчик. Пиши чистый код с комментариями. Объясняй почему, а не только как. Указывай язык в блоках кода. Предлагай лучшие практики.",
     "translate":    "Ты — профессиональный переводчик. Переводи естественно, не дословно. Сохраняй стиль оригинала.",
     "write":        "Ты — талантливый копирайтер. Пиши живо, с эмоциями и конкретикой. Избегай клише и канцелярита.",
     "analyze":      "Ты — аналитик уровня McKinsey. Структура: суть → анализ → факты → выводы → рекомендации.",
@@ -60,25 +112,25 @@ MODE_NAMES = {
 }
 
 # =============================================
-# ЗАПРОС К ИИ
+# ЗАПРОСЫ К ИИ
 # =============================================
-async def call_ai(messages, model_key):
-    response = httpx.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={"model": MODELS[model_key][0], "messages": messages, "max_tokens": 2048},
-        timeout=60.0
-    )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+async def call_openrouter(messages, model_id, photo_b64=None, photo_mime="image/jpeg"):
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"model": model_id, "messages": messages, "max_tokens": 2048},
+        )
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
 
 async def ask(uid, message, mode_override=None):
-    history  = get_history(uid)
-    system   = PROMPTS.get(mode_override or get_mode(uid), PROMPTS["default"])
-    ai       = get_ai(uid)
+    history = get_history(uid)
+    system  = PROMPTS.get(mode_override or get_mode(uid), PROMPTS["default"])
+    ai      = get_ai(uid)
 
     history.append({"role": "user", "content": message})
     if len(history) > 20:
@@ -86,21 +138,29 @@ async def ask(uid, message, mode_override=None):
         history = user_history[uid]
 
     messages = [{"role": "system", "content": system}] + history
-    reply = await call_ai(messages, ai)
+
+    if src(ai) == "groq":
+        response = groq_client.chat.completions.create(
+            model=mid(ai), messages=messages, max_tokens=2048
+        )
+        reply = response.choices[0].message.content
+    else:
+        reply = await call_openrouter(messages, mid(ai))
+
     history.append({"role": "assistant", "content": reply})
     return reply
 
-async def ask_with_photo(uid, caption, photo_b64, mime_type="image/jpeg"):
+async def ask_with_photo(uid, caption, photo_b64):
     ai     = get_ai(uid)
     system = PROMPTS.get(get_mode(uid), PROMPTS["default"])
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{photo_b64}"}},
-            {"type": "text", "text": caption or "Опиши что на этом изображении подробно."}
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{photo_b64}"}},
+            {"type": "text", "text": caption or "Опиши подробно что на этом изображении."}
         ]}
     ]
-    reply = await call_ai(messages, ai)
+    reply = await call_openrouter(messages, mid(ai))
     get_history(uid).append({"role": "user",      "content": caption or "[фото]"})
     get_history(uid).append({"role": "assistant", "content": reply})
     return reply
@@ -115,14 +175,15 @@ async def send(update, text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     name = update.effective_user.first_name
-    vision = "📸 Понимает фото" if supports_vision(uid) else "🚫 Фото не поддерживает"
+    ai   = get_ai(uid)
+    vis  = "📸 Понимает фото" if vision(ai) else "🚫 Фото не поддерживает"
     await update.message.reply_text(
         f"Привет, {name}! 👋\n\n"
-        f"🧠 Модель: {get_ai_label(uid)}\n"
-        f"🎭 Режим: {MODE_NAMES.get(get_mode(uid))}\n"
-        f"{vision}\n\n"
+        f"🧠 Модель: {label(ai)}\n"
+        f"🏢 {company(ai)}\n"
+        f"{vis}\n\n"
         "Просто напиши что-нибудь!\n"
-        "/models — выбрать ИИ\n"
+        "/models — выбрать модель\n"
         "/help — все команды"
     )
 
@@ -130,16 +191,18 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 ВСЕ КОМАНДЫ:\n\n"
         "━━━ 🤖 МОДЕЛИ ━━━\n"
-        "/models — список всех\n"
-        "/chatgpt — 💬 ChatGPT 4o Mini (OpenAI)\n"
-        "/deepseek — 🔍 DeepSeek V3 (DeepSeek)\n"
-        "/gemini — ✨ Gemini 2.0 Flash (Google)\n"
-        "/llama — 🦙 Llama 3.3 70B (Meta)\n\n"
+        "/models — список и выбор\n"
+        "/gemini — ✨ Gemini 2.0 Flash 📸\n"
+        "/deepseek — 🔍 DeepSeek V3\n"
+        "/deepseek_r1 — 🔬 DeepSeek R1 (логика)\n"
+        "/llama — 🦙 Llama 3.3 70B (код)\n"
+        "/qwen — 👁️ Qwen2.5 VL 72B 📸\n"
+        "/mistral — 💨 Mistral 7B (быстро)\n\n"
         "━━━ 📸 АНАЛИЗ ФОТО ━━━\n"
-        "Поддерживают фото 2 модели:\n"
-        "💬 ChatGPT 4o Mini — отправь фото\n"
-        "✨ Gemini 2.0 Flash — отправь фото\n"
-        "Просто отправь фото (можно с подписью)!\n\n"
+        "Просто отправь фото (можно с подписью)!\n"
+        "Поддерживают фото:\n"
+        "✨ Gemini 2.0 Flash\n"
+        "👁️ Qwen2.5 VL 72B\n\n"
         "━━━ 🎭 РЕЖИМЫ ━━━\n"
         "/mode — меню режимов\n"
         "/default — 🤖 Универсальный\n"
@@ -166,28 +229,24 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def models_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await update.message.reply_text(
-        f"🤖 Сейчас: {get_ai_label(uid)}\n\n"
-        "━━━ Выбери модель ━━━\n\n"
-        "/chatgpt — 💬 ChatGPT 4o Mini\n"
-        "   └ OpenAI · универсальный · 📸 фото\n\n"
-        "/deepseek — 🔍 DeepSeek V3\n"
-        "   └ DeepSeek · код и логика\n\n"
-        "/gemini — ✨ Gemini 2.0 Flash\n"
-        "   └ Google · быстрый · 📸 фото\n\n"
-        "/llama — 🦙 Llama 3.3 70B\n"
-        "   └ Meta · открытый · надёжный\n"
-    )
+    ai  = get_ai(uid)
+    text = f"🤖 Сейчас: {label(ai)}\n\n━━━ Выбери модель ━━━\n\n"
+    for key, m in MODELS.items():
+        active = "✅" if key == ai else "○"
+        vis_icon = "📸" if m[4] else "🚫📸"
+        text += f"{active} /{key} — {m[2]} {vis_icon}\n"
+        text += f"   └ {m[3]} · {m[5]}\n\n"
+    await send(update, text)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ai  = get_ai(uid)
-    vision = "📸 Да" if MODELS[ai][3] else "🚫 Нет"
+    vis = "📸 Да" if vision(ai) else "🚫 Нет"
     await update.message.reply_text(
-        f"🧠 Модель: {MODELS[ai][1]}\n"
-        f"🏢 Компания: {MODELS[ai][2]}\n"
-        f"📸 Анализ фото: {vision}\n"
-        f"🎭 Режим: {MODE_NAMES.get(get_mode(uid), get_mode(uid))}\n"
+        f"🧠 Модель: {label(ai)}\n"
+        f"🏢 Компания: {company(ai)}\n"
+        f"📸 Анализ фото: {vis}\n"
+        f"🎭 Режим: {MODE_NAMES.get(get_mode(uid))}\n"
         f"💬 Сообщений в памяти: {len(get_history(uid))}"
     )
 
@@ -195,21 +254,27 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_history[update.effective_user.id] = []
     await update.message.reply_text("🗑️ История очищена!")
 
-# — Переключение моделей —
+# Переключение моделей
 async def switch_ai(update, uid, key):
     user_ai[uid] = key
     user_history[uid] = []
-    label   = MODELS[key][1]
-    company = MODELS[key][2]
-    vision  = "📸 Понимает фото" if MODELS[key][3] else "🚫 Фото не поддерживает"
-    await update.message.reply_text(f"{label}\n🏢 {company}\n{vision}\nИстория очищена.")
+    vis = "📸 Поддерживает фото!" if vision(key) else "🚫 Фото не поддерживает.\n\nДля фото используй:\n/gemini или /qwen"
+    await update.message.reply_text(
+        f"{label(key)}\n"
+        f"🏢 {company(key)}\n"
+        f"{vis}\n\n"
+        f"ℹ️ {desc(key)}\n\n"
+        "История очищена."
+    )
 
-async def set_chatgpt(u, c):  await switch_ai(u, u.effective_user.id, "chatgpt")
-async def set_deepseek(u, c): await switch_ai(u, u.effective_user.id, "deepseek")
-async def set_gemini(u, c):   await switch_ai(u, u.effective_user.id, "gemini")
-async def set_llama(u, c):    await switch_ai(u, u.effective_user.id, "llama")
+async def set_gemini(u,c):      await switch_ai(u, u.effective_user.id, "gemini")
+async def set_deepseek(u,c):    await switch_ai(u, u.effective_user.id, "deepseek")
+async def set_deepseek_r1(u,c): await switch_ai(u, u.effective_user.id, "deepseek_r1")
+async def set_llama(u,c):       await switch_ai(u, u.effective_user.id, "llama")
+async def set_qwen(u,c):        await switch_ai(u, u.effective_user.id, "qwen")
+async def set_mistral(u,c):     await switch_ai(u, u.effective_user.id, "mistral")
 
-# — Режимы —
+# Режимы
 async def mode_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎭 Выбери режим:\n\n"
@@ -234,11 +299,11 @@ async def m_analyze(u,c):      await set_m(u,c,"analyze",       "📊 Режим
 async def m_presentation(u,c): await set_m(u,c,"presentation",  "📋 Режим: Презентации!")
 async def m_excel(u,c):        await set_m(u,c,"excel",         "📗 Режим: Excel!")
 
-# — Инструменты —
-async def quick_cmd(update, context, mode, label, prefix=""):
+# Инструменты
+async def quick_cmd(update, context, mode, lbl, prefix=""):
     args = " ".join(context.args) if context.args else None
     if not args:
-        await update.message.reply_text(f"Использование: /{label} <текст>"); return
+        await update.message.reply_text(f"Использование: /{lbl} <текст>"); return
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
         reply = await ask(update.effective_user.id, prefix + args, mode_override=mode)
@@ -247,12 +312,12 @@ async def quick_cmd(update, context, mode, label, prefix=""):
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def cmd_image(u,c):   await quick_cmd(u,c,"image","image")
-async def cmd_sum(u,c):     await quick_cmd(u,c,"summarize","sum",     "Сожми этот текст: ")
-async def cmd_explain(u,c): await quick_cmd(u,c,"explain","explain",   "Объясни просто: ")
-async def cmd_fix(u,c):     await quick_cmd(u,c,"write","fix",         "Исправь грамматику и объясни ошибки: ")
-async def cmd_ideas(u,c):   await quick_cmd(u,c,"write","ideas",       "Придумай 10 идей с пояснениями: ")
-async def cmd_pptx(u,c):    await quick_cmd(u,c,"presentation","pptx", "Структура презентации 8-10 слайдов: ")
-async def cmd_table(u,c):   await quick_cmd(u,c,"excel","table",       "Создай таблицу в Markdown: ")
+async def cmd_sum(u,c):     await quick_cmd(u,c,"summarize","sum",   "Сожми этот текст: ")
+async def cmd_explain(u,c): await quick_cmd(u,c,"explain","explain", "Объясни просто: ")
+async def cmd_fix(u,c):     await quick_cmd(u,c,"write","fix",       "Исправь грамматику и объясни ошибки: ")
+async def cmd_ideas(u,c):   await quick_cmd(u,c,"write","ideas",     "Придумай 10 идей с пояснениями: ")
+async def cmd_pptx(u,c):    await quick_cmd(u,c,"presentation","pptx","Структура презентации 8-10 слайдов: ")
+async def cmd_table(u,c):   await quick_cmd(u,c,"excel","table",     "Создай таблицу в Markdown: ")
 
 async def cmd_story(u,c):
     args = " ".join(c.args) if c.args else None
@@ -278,26 +343,29 @@ async def cmd_gif(u,c):
     except Exception as e:
         await u.message.reply_text(f"❌ Ошибка: {e}")
 
-# — Обработка фото —
+# Обработка фото
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if not supports_vision(uid):
-        ai_label = get_ai_label(uid)
+    ai  = get_ai(uid)
+
+    if not vision(ai):
         await update.message.reply_text(
-            f"🚫 {ai_label} не поддерживает фото.\n\n"
-            "Переключись на модель с поддержкой фото:\n"
-            "/chatgpt — 💬 ChatGPT 4o Mini\n"
-            "/gemini — ✨ Gemini 2.0 Flash"
+            f"🚫 {label(ai)} не поддерживает анализ фото.\n\n"
+            f"ℹ️ Эта модель работает только с текстом — это нормально, "
+            f"просто такова её архитектура.\n\n"
+            "Для анализа фото переключись на:\n"
+            "/gemini — ✨ Gemini 2.0 Flash\n"
+            "/qwen — 👁️ Qwen2.5 VL 72B"
         )
         return
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
-        photo_file = await update.message.photo[-1].get_file()
+        photo_file  = await update.message.photo[-1].get_file()
         photo_bytes = await photo_file.download_as_bytearray()
-        photo_b64 = base64.b64encode(photo_bytes).decode("utf-8")
-        caption = update.message.caption or ""
-        reply = await ask_with_photo(uid, caption, photo_b64)
+        photo_b64   = base64.b64encode(photo_bytes).decode("utf-8")
+        caption     = update.message.caption or ""
+        reply       = await ask_with_photo(uid, caption, photo_b64)
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка при анализе фото: {e}")
@@ -320,10 +388,12 @@ async def post_init(app):
         BotCommand("models",       "🤖 Выбрать модель"),
         BotCommand("status",       "📍 Текущий статус"),
         BotCommand("clear",        "🗑️ Очистить историю"),
-        BotCommand("chatgpt",      "💬 ChatGPT 4o Mini (OpenAI) 📸"),
-        BotCommand("deepseek",     "🔍 DeepSeek V3 (DeepSeek)"),
         BotCommand("gemini",       "✨ Gemini 2.0 Flash (Google) 📸"),
-        BotCommand("llama",        "🦙 Llama 3.3 70B (Meta)"),
+        BotCommand("deepseek",     "🔍 DeepSeek V3 (тексты/анализ)"),
+        BotCommand("deepseek_r1",  "🔬 DeepSeek R1 (логика/математика)"),
+        BotCommand("llama",        "🦙 Llama 3.3 70B (код)"),
+        BotCommand("qwen",         "👁️ Qwen2.5 VL 72B (фото) 📸"),
+        BotCommand("mistral",      "💨 Mistral 7B (быстрый)"),
         BotCommand("mode",         "🎭 Сменить режим"),
         BotCommand("code",         "💻 Программист"),
         BotCommand("translate",    "🌍 Переводчик"),
@@ -335,6 +405,7 @@ async def post_init(app):
         BotCommand("ideas",        "💡 Генерация идей"),
         BotCommand("image",        "🖼️ Промпт для картинки"),
         BotCommand("story",        "📖 Написать историю"),
+        BotCommand("gif",          "🎞️ Описание GIF"),
         BotCommand("pptx",         "📊 Структура презентации"),
         BotCommand("table",        "📗 Создать таблицу"),
     ])
@@ -348,10 +419,12 @@ def main():
     app.add_handler(CommandHandler("models",       models_cmd))
     app.add_handler(CommandHandler("status",       status))
     app.add_handler(CommandHandler("clear",        clear))
-    app.add_handler(CommandHandler("chatgpt",      set_chatgpt))
-    app.add_handler(CommandHandler("deepseek",     set_deepseek))
     app.add_handler(CommandHandler("gemini",       set_gemini))
+    app.add_handler(CommandHandler("deepseek",     set_deepseek))
+    app.add_handler(CommandHandler("deepseek_r1",  set_deepseek_r1))
     app.add_handler(CommandHandler("llama",        set_llama))
+    app.add_handler(CommandHandler("qwen",         set_qwen))
+    app.add_handler(CommandHandler("mistral",      set_mistral))
     app.add_handler(CommandHandler("mode",         mode_menu))
     app.add_handler(CommandHandler("default",      m_default))
     app.add_handler(CommandHandler("code",         m_code))
