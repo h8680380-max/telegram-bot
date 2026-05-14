@@ -110,7 +110,7 @@ NUTRITION_PROMPT = (
 
 async def call_vision(photo_b64, description):
     body = json.dumps({
-        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "model": "google/gemma-4-27b-it:free",
         "messages": [
             {"role": "system", "content": ANALYZE_PHOTO_PROMPT},
             {"role": "user", "content": [
@@ -142,6 +142,27 @@ async def call_vision(photo_b64, description):
                 content = part
                 break
     return json.loads(content)
+
+async def lookup_barcode(barcode):
+    """Ищет продукт по штрихкоду в Open Food Facts"""
+    url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+    req = urllib.request.Request(url, headers={"User-Agent": "CalorieBot/1.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if data.get("status") != 1:
+        return None
+    p = data["product"]
+    n = p.get("nutriments", {})
+    name = p.get("product_name_ru") or p.get("product_name") or "Неизвестный продукт"
+    return {
+        "dish":     name,
+        "calories": int(n.get("energy-kcal_100g", n.get("energy_100g", 0)) or 0),
+        "protein":  round(float(n.get("proteins_100g", 0) or 0), 1),
+        "fat":      round(float(n.get("fat_100g", 0) or 0), 1),
+        "carbs":    round(float(n.get("carbohydrates_100g", 0) or 0), 1),
+        "weight":   100,
+        "comment":  f"Данные с упаковки (на 100г)"
+    }
 
 async def call_groq_json(prompt, user_text):
     messages = [
@@ -204,6 +225,7 @@ def format_meal_added(result, uid):
 def add_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Фото блюда",        callback_data="add_photo")],
+        [InlineKeyboardButton("🔢 Штрихкод",           callback_data="add_barcode")],
         [InlineKeyboardButton("✏️ Написать название", callback_data="add_text")],
         [InlineKeyboardButton("🔍 Поиск в базе",      callback_data="add_search")],
         [InlineKeyboardButton("⭐ Избранное",          callback_data="add_favorite")],
@@ -299,6 +321,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• банан"
         )
 
+    elif data == "add_barcode":
+        set_state(uid, "wait_barcode_photo")
+        await query.message.reply_text(
+            "🔢 Отправь фото штрихкода продукта!\n\n"
+            "Или напиши штрихкод вручную (цифры с упаковки)."
+        )
+
     elif data == "add_favorite":
         favorites = get_favorites(uid)
         if not favorites:
@@ -358,15 +387,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_state(uid, f"wait_weight_search_{name}")
         await query.message.reply_text(f"Сколько граммов {name}?")
 
-    elif data.startswith("save_fav_"):
-        # Сохранить последнее блюдо в избранное
-        meal_json = data[9:]
-        try:
-            meal = json.loads(meal_json)
+    elif data == "save_last_fav":
+        meal = context.user_data.get("last_meal")
+        if meal:
             get_favorites(uid)[meal["dish"]] = meal
-            await query.message.reply_text(f"Добавлено в избранное: {meal['dish']}")
-        except:
-            await query.message.reply_text("Ошибка сохранения.")
+            await query.message.reply_text(f"⭐ Добавлено в избранное: {meal['dish']}")
+        else:
+            await query.message.reply_text("Не удалось сохранить — попробуй добавить снова.")
+
+    elif data == "edit_calories":
+        meal = context.user_data.get("last_meal")
+        if meal:
+            set_state(uid, "wait_edit_calories")
+            await query.message.reply_text(
+                f"✏️ Исправить калории для: {meal['dish']}
+"
+                f"Сейчас: {meal['calories']} ккал
+
+"
+                "Введи правильное количество ккал:"
+            )
+        else:
+            await query.message.reply_text("Нет последнего блюда для редактирования.")
 
 # =============================================
 # ОБРАБОТКА ФОТО
@@ -379,6 +421,65 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file  = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     photo_b64   = base64.b64encode(photo_bytes).decode("utf-8")
+
+    state = get_state(uid)
+
+    # Если ждём фото штрихкода — сканируем
+    if state == "wait_barcode_photo":
+        clear_state(uid)
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        # Пробуем распознать штрихкод через ИИ
+        try:
+            barcode_prompt = (
+                "На фото штрихкод продукта. Распознай ТОЛЬКО цифры штрихкода. "
+                "Отвечай ТОЛЬКО цифрами без пробелов и ничего больше."
+            )
+            body = json.dumps({
+                "model": "google/gemma-4-27b-it:free",
+                "messages": [
+                    {"role": "system", "content": barcode_prompt},
+                    {"role": "user", "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{photo_b64}"}},
+                        {"type": "text", "text": "Штрихкод на фото:"}
+                    ]}
+                ],
+                "max_tokens": 30,
+            }, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=body,
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json; charset=utf-8",
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            barcode = data["choices"][0]["message"]["content"].strip().replace(" ", "")
+            if barcode.isdigit() and len(barcode) >= 8:
+                result = await lookup_barcode(barcode)
+                if result:
+                    add_meal(uid, dict(result))
+                    context.user_data["last_meal"] = result
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⭐ В избранное",    callback_data="save_last_fav")],
+                        [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
+                    ])
+                    await update.message.reply_text(format_meal_added(result, uid), reply_markup=keyboard)
+                    return
+            await update.message.reply_text(
+                "Не удалось распознать штрихкод с фото.
+
+"
+                "Попробуй ввести цифры вручную:"
+            )
+            set_state(uid, "wait_barcode_photo")
+        except Exception as e:
+            await update.message.reply_text(f"Ошибка: {e}
+Введи штрихкод вручную:")
+            set_state(uid, "wait_barcode_photo")
+        return
 
     if caption:
         await do_analyze_photo(update, context, uid, photo_b64, caption)
@@ -398,18 +499,18 @@ async def do_analyze_photo(update, context, uid, photo_b64, description):
         add_meal(uid, dict(result))
         text = format_meal_added(result, uid)
 
-        # Кнопка "в избранное"
-        meal_str = json.dumps({"dish": result["dish"], "calories": result["calories"],
-                               "protein": result["protein"], "fat": result["fat"],
-                               "carbs": result["carbs"], "weight": result["weight"]},
-                              ensure_ascii=False)
-        if len(meal_str) < 60:
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("⭐ В избранное", callback_data=f"save_fav_{meal_str}")
-            ]])
-            await update.message.reply_text(text, reply_markup=keyboard)
-        else:
-            await update.message.reply_text(text)
+        # Сохраняем последнее блюдо в памяти и показываем кнопку
+        if uid not in user_state: user_state[uid] = {}
+        context.user_data["last_meal"] = {
+            "dish": result["dish"], "calories": result["calories"],
+            "protein": result["protein"], "fat": result["fat"],
+            "carbs": result["carbs"], "weight": result["weight"]
+        }
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐ В избранное",  callback_data="save_last_fav")],
+            [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
+        ])
+        await update.message.reply_text(text, reply_markup=keyboard)
         clear_state(uid)
     except Exception as e:
         await update.message.reply_text(f"Не удалось проанализировать: {e}\nПопробуй ещё раз.")
@@ -438,7 +539,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             result = await call_groq_json(ANALYZE_TEXT_PROMPT, text)
             add_meal(uid, dict(result))
-            await update.message.reply_text(format_meal_added(result, uid))
+            context.user_data["last_meal"] = {
+                "dish": result["dish"], "calories": result["calories"],
+                "protein": result["protein"], "fat": result["fat"],
+                "carbs": result["carbs"], "weight": result["weight"]
+            }
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⭐ В избранное",    callback_data="save_last_fav")],
+                [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
+            ])
+            await update.message.reply_text(format_meal_added(result, uid), reply_markup=keyboard)
         except Exception as e:
             await update.message.reply_text(f"Не удалось распознать: {e}\nПопробуй написать точнее.")
         return
@@ -482,6 +592,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(resp_text, reply_markup=InlineKeyboardMarkup(keyboard))
         except Exception as e:
             await update.message.reply_text(f"Ошибка поиска: {e}")
+        return
+
+    # Ждём исправление калорий
+    if state == "wait_edit_calories":
+        clear_state(uid)
+        try:
+            new_cal = int(text.strip())
+            meals, today = get_today_meals(uid)
+            meal = context.user_data.get("last_meal")
+            if meal and meals:
+                # Найти последнее блюдо в дневнике и исправить
+                for m in reversed(meals):
+                    if m.get("dish") == meal["dish"]:
+                        old_cal = m["calories"]
+                        m["calories"] = new_cal
+                        context.user_data["last_meal"]["calories"] = new_cal
+                        total, _ = get_daily_total(uid)
+                        await update.message.reply_text(
+                            f"✅ Исправлено!
+"
+                            f"{meal['dish']}: {old_cal} → {new_cal} ккал
+
+"
+                            f"За сегодня: {total['calories']} ккал"
+                        )
+                        break
+                else:
+                    await update.message.reply_text("Блюдо не найдено в дневнике.")
+            else:
+                await update.message.reply_text("Нет блюда для редактирования.")
+        except ValueError:
+            await update.message.reply_text("Введи число! Например: 178")
         return
 
     # Ждём вес для продукта из поиска
@@ -586,9 +728,70 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Ошибка: {e}")
         return
 
-    # Обычный вопрос про питание
+    # Ждём штрихкод текстом
+    if state == "wait_barcode_photo":
+        barcode = text.strip().replace(" ", "")
+        if barcode.isdigit():
+            clear_state(uid)
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+            try:
+                result = await lookup_barcode(barcode)
+                if result:
+                    add_meal(uid, dict(result))
+                    context.user_data["last_meal"] = result
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⭐ В избранное",    callback_data="save_last_fav")],
+                        [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
+                    ])
+                    await update.message.reply_text(format_meal_added(result, uid), reply_markup=keyboard)
+                else:
+                    await update.message.reply_text(
+                        "Продукт не найден в базе.
+
+"
+                        "Попробуй добавить вручную через /add"
+                    )
+            except Exception as e:
+                await update.message.reply_text(f"Ошибка поиска: {e}")
+            return
+        else:
+            await update.message.reply_text("Введи только цифры штрихкода, например: 4607086563126")
+            return
+
+    # Обычный вопрос — проверяем что он про еду/питание
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
+        # Сначала проверяем тему вопроса
+        check_prompt = (
+            "Ответь только одним словом: ДА или НЕТ. "
+            "Этот вопрос связан с едой, питанием, калориями, диетой, здоровьем, продуктами или весом?"
+        )
+        check = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": check_prompt},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=5
+        )
+        answer = check.choices[0].message.content.strip().upper()
+        if "ДА" not in answer and "YES" not in answer:
+            await update.message.reply_text(
+                "Я специализируюсь только на питании и калориях! 🥗
+
+"
+                "Могу помочь с:
+"
+                "• Подсчётом калорий
+"
+                "• Советами по питанию
+"
+                "• Анализом еды
+
+"
+                "Используй /add чтобы добавить еду."
+            )
+            return
         reply = await ask_nutrition(uid, text)
         await send(update, reply)
     except Exception as e:
@@ -843,4 +1046,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
