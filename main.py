@@ -400,11 +400,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if meal:
             set_state(uid, "wait_edit_calories")
             await query.message.reply_text(
-                f"✏️ Исправить калории для: {meal['dish']}
-"
-                f"Сейчас: {meal['calories']} ккал
-
-"
+                f"✏️ Исправить калории для: {meal['dish']}\n"
+                f"Сейчас: {meal['calories']} ккал\n\n"
                 "Введи правильное количество ккал:"
             )
         else:
