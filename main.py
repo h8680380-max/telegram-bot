@@ -7,103 +7,101 @@ import json
 import base64
 import os
 from datetime import datetime
-
-# =============================================
-# КЛЮЧИ
-# =============================================
+ 
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN",     "ВСТАВЬ_СЮДА")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
 GROQ_API_KEY       = os.environ.get("GROQ_API_KEY",       "ВСТАВЬ_СЮДА")
-
+ 
 groq_client = Groq(api_key=GROQ_API_KEY)
-
-# =============================================
-# ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ
-# =============================================
+ 
 user_profiles  = {}
 user_diary     = {}
 user_custom    = {}
 user_favorites = {}
 user_state     = {}
 pending_photo  = {}
-
+ 
 def get_profile(uid):
     if uid not in user_profiles:
-        user_profiles[uid] = {
-            "goal": None, "weight": None, "height": None,
-            "age": None, "gender": None, "target_calories": None
-        }
+        user_profiles[uid] = {"goal": None, "weight": None, "height": None, "age": None, "gender": None, "target_calories": None}
     return user_profiles[uid]
-
+ 
 def get_today_meals(uid):
     today = datetime.now().strftime("%Y-%m-%d")
     if uid not in user_diary: user_diary[uid] = {}
     if today not in user_diary[uid]: user_diary[uid][today] = []
     return user_diary[uid][today], today
-
+ 
 def add_meal(uid, meal):
     meals, _ = get_today_meals(uid)
     meal["time"] = datetime.now().strftime("%H:%M")
     meals.append(meal)
-
+ 
 def get_daily_total(uid):
     meals, _ = get_today_meals(uid)
-    t = {"calories": 0, "protein": 0, "fat": 0, "carbs": 0}
+    t = {"calories": 0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
     for m in meals:
-        t["calories"] += m.get("calories", 0)
-        t["protein"]  += m.get("protein", 0)
-        t["fat"]      += m.get("fat", 0)
-        t["carbs"]    += m.get("carbs", 0)
+        t["calories"] += int(m.get("calories", 0))
+        t["protein"]  += float(m.get("protein", 0))
+        t["fat"]      += float(m.get("fat", 0))
+        t["carbs"]    += float(m.get("carbs", 0))
+    t["protein"] = round(t["protein"], 1)
+    t["fat"]     = round(t["fat"], 1)
+    t["carbs"]   = round(t["carbs"], 1)
     return t, meals
-
+ 
 def get_custom_foods(uid):
     if uid not in user_custom: user_custom[uid] = {}
     return user_custom[uid]
-
+ 
 def get_favorites(uid):
     if uid not in user_favorites: user_favorites[uid] = {}
     return user_favorites[uid]
-
+ 
 def set_state(uid, state): user_state[uid] = state
 def get_state(uid): return user_state.get(uid)
 def clear_state(uid): user_state.pop(uid, None)
-
+ 
 async def send(update, text):
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
-
+ 
 # =============================================
 # ПРОМПТЫ
 # =============================================
 ANALYZE_PHOTO_PROMPT = (
-    "Ты - эксперт диетолог. Пользователь прислал фото еды и описание. "
-    "Рассчитай калории и КЖБУ. "
-    "Отвечай СТРОГО в формате JSON без лишнего текста: "
-    "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,"
-    "\"weight\":число,\"comment\":\"1-2 предложения о блюде\"} "
-    "Все числа целые."
+    "Ты - профессиональный диетолог с 20 годами опыта. "
+    "Пользователь прислал фото еды с описанием. "
+    "Максимально точно рассчитай КЖБУ. "
+    "Учитывай способ приготовления, ингредиенты, размер порции. "
+    "Отвечай СТРОГО только JSON без лишнего текста: "
+    "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,\"weight\":число,\"comment\":\"совет диетолога 1-2 предложения\"} "
+    "Все числа целые. calories должны быть реалистичными (обычная порция 200-800 ккал)."
 )
-
+ 
 ANALYZE_TEXT_PROMPT = (
-    "Ты - эксперт диетолог. Пользователь написал что съел. "
-    "Рассчитай калории и КЖБУ максимально точно. "
-    "Если указан вес - используй его. Если нет - возьми стандартную порцию. "
-    "Отвечай СТРОГО в формате JSON без лишнего текста: "
-    "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,"
-    "\"weight\":число,\"comment\":\"1-2 предложения\"} "
+    "Ты - профессиональный диетолог с 20 годами опыта. "
+    "Пользователь написал что съел. Максимально точно рассчитай КЖБУ. "
+    "Если указан вес - используй его точно. Если нет - стандартная порция. "
+    "Примеры точных расчетов: "
+    "100г куриной грудки варёной = 165 ккал, 31г белка, 3г жира, 0г углеводов. "
+    "100г гречки варёной = 92 ккал, 3г белка, 0.6г жира, 20г углеводов. "
+    "Отвечай СТРОГО только JSON без лишнего текста: "
+    "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,\"weight\":число,\"comment\":\"совет 1-2 предложения\"} "
     "Все числа целые."
 )
-
+ 
 NUTRITION_PROMPT = (
-    "Ты - опытный диетолог. Даешь практичные советы по питанию. "
-    "Отвечай на языке пользователя, кратко и по делу."
+    "Ты - опытный диетолог и нутрициолог. "
+    "Отвечай кратко, конкретно и на языке пользователя. "
+    "Давай практичные советы основанные на науке."
 )
-
+ 
 # =============================================
-# ЗАПРОСЫ К ИИ
+# ЗАПРОСЫ К ИИ С RETRY И ВАЛИДАЦИЕЙ
 # =============================================
-
-def parse_json_response(content):
+ 
+def parse_json(content):
     content = content.strip()
     if "```" in content:
         for part in content.split("```"):
@@ -111,21 +109,36 @@ def parse_json_response(content):
             if part.startswith("{"):
                 content = part
                 break
+    start = content.find("{")
+    end   = content.rfind("}") + 1
+    if start != -1 and end > start:
+        content = content[start:end]
     return json.loads(content)
-
-async def call_vision(photo_b64, description):
+ 
+def validate_meal(data):
+    required = ["dish", "calories", "protein", "fat", "carbs", "weight"]
+    for k in required:
+        if k not in data:
+            raise ValueError("Missing field: " + k)
+    cal = int(data["calories"])
+    if cal < 0 or cal > 5000:
+        raise ValueError("Unrealistic calories: " + str(cal))
+    return {
+        "dish":    str(data["dish"]),
+        "calories": int(data["calories"]),
+        "protein":  round(float(data["protein"]), 1),
+        "fat":      round(float(data["fat"]), 1),
+        "carbs":    round(float(data["carbs"]), 1),
+        "weight":   int(data["weight"]),
+        "comment":  str(data.get("comment", ""))
+    }
+ 
+async def call_openrouter(messages, model="google/gemma-4-27b-it:free"):
     body = json.dumps({
-        "model": "google/gemma-4-27b-it:free",
-        "messages": [
-            {"role": "system", "content": ANALYZE_PHOTO_PROMPT},
-            {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + photo_b64}},
-                {"type": "text", "text": "Описание: " + description}
-            ]}
-        ],
+        "model": model,
+        "messages": messages,
         "max_tokens": 400,
     }, ensure_ascii=False).encode("utf-8")
-
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
         data=body,
@@ -139,8 +152,53 @@ async def call_vision(photo_b64, description):
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    return parse_json_response(data["choices"][0]["message"]["content"])
-
+    return data["choices"][0]["message"]["content"]
+ 
+FALLBACK_MODELS = [
+    "google/gemma-4-27b-it:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+]
+ 
+async def call_vision(photo_b64, description):
+    messages = [
+        {"role": "system", "content": ANALYZE_PHOTO_PROMPT},
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + photo_b64}},
+            {"type": "text", "text": "Описание пользователя: " + description}
+        ]}
+    ]
+    errors = []
+    for model in FALLBACK_MODELS[:2]:
+        for attempt in range(2):
+            try:
+                content = await call_openrouter(messages, model)
+                return validate_meal(parse_json(content))
+            except Exception as e:
+                errors.append(str(e))
+    raise Exception("Все модели недоступны. Попробуй позже. Ошибки: " + "; ".join(errors[-2:]))
+ 
+async def call_groq_json(prompt, user_text):
+    errors = []
+    for attempt in range(3):
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_text}
+                ],
+                max_tokens=400
+            )
+            content = response.choices[0].message.content
+            data    = parse_json(content)
+            if "dish" in data:
+                return validate_meal(data)
+            return data
+        except Exception as e:
+            errors.append(str(e))
+    raise Exception("Не удалось распознать после 3 попыток: " + "; ".join(errors))
+ 
 async def lookup_barcode(barcode):
     url = "https://world.openfoodfacts.org/api/v0/product/" + barcode + ".json"
     req = urllib.request.Request(url, headers={"User-Agent": "CalorieBot/1.0"})
@@ -160,33 +218,22 @@ async def lookup_barcode(barcode):
         "weight":   100,
         "comment":  "Данные с упаковки (на 100г)"
     }
-
-async def call_groq_json(prompt, user_text):
-    response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": user_text}
-        ],
-        max_tokens=400
-    )
-    return parse_json_response(response.choices[0].message.content)
-
+ 
 async def ask_nutrition(uid, question):
     profile = get_profile(uid)
     total, _ = get_daily_total(uid)
     ctx = ""
-    if profile["goal"]: ctx += "Цель: " + profile["goal"] + ". "
+    if profile["goal"]:   ctx += "Цель: " + profile["goal"] + ". "
     if profile["weight"]: ctx += "Вес: " + str(profile["weight"]) + "кг. "
     if total["calories"] > 0: ctx += "Сегодня: " + str(total["calories"]) + " ккал."
-    system = NUTRITION_PROMPT + ("\nКонтекст: " + ctx if ctx else "")
+    system = NUTRITION_PROMPT + ("\nКонтекст о пользователе: " + ctx if ctx else "")
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "system", "content": system}, {"role": "user", "content": question}],
         max_tokens=800
     )
     return response.choices[0].message.content
-
+ 
 def format_meal_added(result, uid):
     total, _ = get_daily_total(uid)
     profile  = get_profile(uid)
@@ -194,43 +241,43 @@ def format_meal_added(result, uid):
     text = (
         "Добавлено: " + result["dish"] + "\n\n"
         "Калории: " + str(result["calories"]) + " ккал\n"
-        "Белки: " + str(result["protein"]) + " г\n"
-        "Жиры: " + str(result["fat"]) + " г\n"
-        "Углеводы: " + str(result["carbs"]) + " г\n"
-        "Порция: ~" + str(result["weight"]) + " г\n"
+        "Белки:   " + str(result["protein"]) + " г\n"
+        "Жиры:    " + str(result["fat"]) + " г\n"
+        "Углеводы:" + str(result["carbs"]) + " г\n"
+        "Порция:  " + str(result["weight"]) + " г\n"
     )
     if result.get("comment"):
         text += "\n" + result["comment"] + "\n"
     text += "\nЗа сегодня: " + str(total["calories"]) + " ккал"
     if target:
         remains = target - total["calories"]
-        text += " (осталось " + str(max(0, remains)) + " из " + str(target) + ")"
+        if remains > 0:
+            text += " (осталось " + str(remains) + " из " + str(target) + ")"
+        else:
+            text += " — превышение на " + str(abs(remains)) + " ккал!"
     return text
-
-def add_food_keyboard():
+ 
+def action_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ В избранное",     callback_data="save_last_fav")],
         [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
     ])
-
-# =============================================
-# МЕНЮ ДОБАВЛЕНИЯ ЕДЫ
-# =============================================
-
+ 
 def add_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📸 Фото блюда",        callback_data="add_photo")],
-        [InlineKeyboardButton("🔢 Штрихкод",           callback_data="add_barcode")],
-        [InlineKeyboardButton("✏️ Написать название", callback_data="add_text")],
+        [InlineKeyboardButton("📸 Фото блюда",       callback_data="add_photo")],
+        [InlineKeyboardButton("🔢 Штрихкод",          callback_data="add_barcode")],
+        [InlineKeyboardButton("✏️ Написать что съел", callback_data="add_text")],
         [InlineKeyboardButton("🔍 Поиск продукта",    callback_data="add_search")],
+        [InlineKeyboardButton("🍳 Своё блюдо",        callback_data="add_own")],
         [InlineKeyboardButton("⭐ Избранное",          callback_data="add_favorite")],
         [InlineKeyboardButton("🍎 Свои продукты",     callback_data="add_custom")],
     ])
-
+ 
 # =============================================
 # КОМАНДЫ
 # =============================================
-
+ 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
     await update.message.reply_text(
@@ -238,75 +285,74 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Я считаю калории и помогаю следить за питанием!\n\n"
         "/add — добавить еду в дневник\n"
         "/diary — дневник питания\n"
+        "/setup — настроить профиль\n"
         "/help — все команды\n\n"
         "Или просто напиши вопрос про питание!"
     )
-
+ 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📋 ВСЕ КОМАНДЫ:\n\n"
-        "🍽️ ДОБАВИТЬ ЕДУ:\n"
+        "ВСЕ КОМАНДЫ:\n\n"
+        "ДОБАВИТЬ ЕДУ:\n"
         "/add — меню добавления\n"
         "  📸 Фото блюда\n"
         "  🔢 Штрихкод с упаковки\n"
         "  ✏️ Написать что съел\n"
         "  🔍 Поиск продукта\n"
+        "  🍳 Своё блюдо (вручную)\n"
         "  ⭐ Избранное\n"
         "  🍎 Свои продукты\n\n"
-        "📔 ДНЕВНИК:\n"
+        "ДНЕВНИК:\n"
         "/diary — питание за сегодня\n"
         "/week — питание за неделю\n"
         "/clear_diary — очистить дневник\n\n"
-        "⭐ ИЗБРАННОЕ:\n"
+        "ИЗБРАННОЕ:\n"
         "/favorites — список избранного\n"
         "/add_fav — добавить в избранное\n\n"
-        "🍎 СВОИ ПРОДУКТЫ:\n"
+        "СВОИ ПРОДУКТЫ:\n"
         "/my_foods — мои продукты\n"
         "/new_food — создать продукт\n\n"
-        "👤 ПРОФИЛЬ:\n"
+        "ПРОФИЛЬ:\n"
         "/setup — как настроить\n"
         "/profile — мой профиль\n\n"
-        "💬 СОВЕТЫ:\n"
+        "СОВЕТЫ:\n"
         "Просто напиши вопрос про питание!"
     )
-
+ 
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_state(update.effective_user.id)
-    await update.message.reply_text(
-        "Как добавить еду?",
-        reply_markup=add_menu_keyboard()
-    )
-
+    await update.message.reply_text("Как добавить еду?", reply_markup=add_menu_keyboard())
+ 
 # =============================================
 # ИНЛАЙН КНОПКИ
 # =============================================
-
+ 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid  = query.from_user.id
     data = query.data
-
+ 
     if data == "add_photo":
         set_state(uid, "wait_photo")
         await query.message.reply_text(
             "📸 Отправь фото блюда!\n"
             "Можно сразу с подписью — напиши что это."
         )
-
-   elif data == "add_barcode":
-    set_state(uid, "wait_barcode")
-    await query.message.reply_text(
-        "🔢 Введи штрихкод с упаковки\n\n"
-        "Как найти штрихкод:\n"
-        "1. Возьми упаковку продукта\n"
-        "2. Найди полосатый рисунок (обычно сзади или снизу)\n"
-        "3. Под полосками есть цифры — введи их\n\n"
-        "Обычно это 8, 10 или 13 цифр\n"
-        "Пример: 4607086563126\n\n"
-        "Просто напиши эти цифры!"
-    )
-
+ 
+    elif data == "add_barcode":
+        set_state(uid, "wait_barcode")
+        await query.message.reply_text(
+            "🔢 Введи штрихкод с упаковки\n\n"
+            "Как найти штрихкод:\n"
+            "1. Возьми упаковку продукта\n"
+            "2. Найди полосатый рисунок (обычно сзади или снизу)\n"
+            "3. Под полосками есть цифры — введи их\n\n"
+            "Обычно 8, 10 или 13 цифр\n"
+            "Пример: 4607086563126\n\n"
+            "Просто напиши эти цифры!"
+        )
+ 
     elif data == "add_text":
         set_state(uid, "wait_text_food")
         await query.message.reply_text(
@@ -318,7 +364,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "куриная грудка с рисом\n"
             "стакан молока 3.2%"
         )
-
+ 
     elif data == "add_search":
         set_state(uid, "wait_search")
         await query.message.reply_text(
@@ -329,40 +375,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "творог 5%\n"
             "банан"
         )
-
+ 
+    elif data == "add_own":
+        set_state(uid, "wait_own_name")
+        await query.message.reply_text(
+            "🍳 Своё блюдо — ввод вручную\n\n"
+            "Шаг 1 из 3: Напиши название блюда\n\n"
+            "Например: Борщ домашний"
+        )
+ 
     elif data == "add_favorite":
         favorites = get_favorites(uid)
         if not favorites:
-            await query.message.reply_text(
-                "Избранное пусто!\n\n"
-                "Добавь блюда через /add_fav"
-            )
+            await query.message.reply_text("Избранное пусто!\n\nДобавь блюда через /add_fav")
             return
         keyboard = []
         for name in list(favorites.keys())[:10]:
             keyboard.append([InlineKeyboardButton(name, callback_data="fav_" + name[:40])])
-        await query.message.reply_text(
-            "⭐ Выбери блюдо:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
+        await query.message.reply_text("⭐ Выбери блюдо:", reply_markup=InlineKeyboardMarkup(keyboard))
+ 
     elif data == "add_custom":
         customs = get_custom_foods(uid)
         real = {k: v for k, v in customs.items() if not k.startswith("_search_")}
         if not real:
-            await query.message.reply_text(
-                "Своих продуктов нет!\n\n"
-                "Добавь через /new_food"
-            )
+            await query.message.reply_text("Своих продуктов нет!\n\nДобавь через /new_food")
             return
         keyboard = []
         for name in list(real.keys())[:10]:
             keyboard.append([InlineKeyboardButton(name, callback_data="custom_" + name[:40])])
-        await query.message.reply_text(
-            "🍎 Выбери продукт:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
+        await query.message.reply_text("🍎 Выбери продукт:", reply_markup=InlineKeyboardMarkup(keyboard))
+ 
     elif data.startswith("fav_"):
         name = data[4:]
         favorites = get_favorites(uid)
@@ -370,7 +412,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             meal = dict(favorites[name])
             add_meal(uid, meal)
             await query.message.reply_text(format_meal_added(meal, uid))
-
+ 
     elif data.startswith("custom_"):
         name = data[7:]
         customs = get_custom_foods(uid)
@@ -381,14 +423,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name + "\n"
                 "На 100г: " + str(food["calories"]) + " ккал | "
                 "Б:" + str(food["protein"]) + "г Ж:" + str(food["fat"]) + "г У:" + str(food["carbs"]) + "г\n\n"
-                "Сколько граммов?"
+                "Сколько граммов съел?"
             )
-
+ 
     elif data.startswith("search_add_"):
         name = data[11:]
         set_state(uid, "wait_weight_search_" + name)
-        await query.message.reply_text("Сколько граммов " + name + "?")
-
+        await query.message.reply_text("Сколько граммов " + name + " съел?")
+ 
     elif data == "save_last_fav":
         meal = context.user_data.get("last_meal")
         if meal:
@@ -396,7 +438,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⭐ Добавлено в избранное: " + meal["dish"])
         else:
             await query.message.reply_text("Нет блюда для сохранения.")
-
+ 
     elif data == "edit_calories":
         meal = context.user_data.get("last_meal")
         if meal:
@@ -408,94 +450,99 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.message.reply_text("Нет блюда для редактирования.")
-
+ 
 # =============================================
 # ОБРАБОТКА ФОТО
 # =============================================
-
+ 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     caption = update.message.caption or ""
-
     photo_file  = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     photo_b64   = base64.b64encode(photo_bytes).decode("utf-8")
-
     if caption:
         await do_analyze_photo(update, context, uid, photo_b64, caption)
     else:
         pending_photo[uid] = photo_b64
         set_state(uid, "wait_photo_desc")
         await update.message.reply_text(
-            "Фото получено! Что это за блюдо?\n\n"
-            "Опиши кратко, например: борщ со сметаной"
+            "Фото получено! Опиши блюдо:\n\n"
+            "Например: борщ со сметаной"
         )
-
+ 
 async def do_analyze_photo(update, context, uid, photo_b64, description):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
         result = await call_vision(photo_b64, description)
         add_meal(uid, dict(result))
-        context.user_data["last_meal"] = {
-            "dish": result["dish"], "calories": result["calories"],
-            "protein": result["protein"], "fat": result["fat"],
-            "carbs": result["carbs"], "weight": result["weight"]
-        }
-        await update.message.reply_text(format_meal_added(result, uid), reply_markup=add_food_keyboard())
+        context.user_data["last_meal"] = result
+        await update.message.reply_text(format_meal_added(result, uid), reply_markup=action_keyboard())
         clear_state(uid)
     except Exception as e:
-        await update.message.reply_text("Не удалось проанализировать: " + str(e) + "\nПопробуй ещё раз.")
-
+        await update.message.reply_text(
+            "Не удалось проанализировать фото.\n\n"
+            "Причина: " + str(e) + "\n\n"
+            "Попробуй:\n"
+            "1. Сфоткать покрупнее\n"
+            "2. Добавить описание блюда\n"
+            "3. Использовать /add -> Написать что съел"
+        )
+ 
 # =============================================
 # ОБРАБОТКА ТЕКСТА
 # =============================================
-
+ 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     text  = update.message.text.strip()
     state = get_state(uid)
-
+ 
+    # Фото без описания
     if state == "wait_photo_desc":
         photo_b64 = pending_photo.pop(uid, None)
         if photo_b64:
             clear_state(uid)
             await do_analyze_photo(update, context, uid, photo_b64, text)
         return
-
+ 
+    # Написать что съел
     if state == "wait_text_food":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         try:
             result = await call_groq_json(ANALYZE_TEXT_PROMPT, text)
             add_meal(uid, dict(result))
-            context.user_data["last_meal"] = {
-                "dish": result["dish"], "calories": result["calories"],
-                "protein": result["protein"], "fat": result["fat"],
-                "carbs": result["carbs"], "weight": result["weight"]
-            }
-            await update.message.reply_text(format_meal_added(result, uid), reply_markup=add_food_keyboard())
+            context.user_data["last_meal"] = result
+            await update.message.reply_text(format_meal_added(result, uid), reply_markup=action_keyboard())
         except Exception as e:
-            await update.message.reply_text("Не удалось распознать: " + str(e) + "\nПиши точнее, например: 100г гречки")
+            await update.message.reply_text(
+                "Не удалось распознать.\n\n"
+                "Попробуй написать точнее:\n"
+                "100г гречки\n"
+                "куриная грудка 150г\n"
+                "2 яйца вареных"
+            )
         return
-
+ 
+    # Поиск продукта
     if state == "wait_search":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         try:
             search_prompt = (
                 "Ты - база данных продуктов питания. "
-                "Пользователь ищет продукт. Дай данные на 100г. "
-                "Отвечай СТРОГО в JSON без лишнего текста: "
-                "{\"results\": [{\"name\":\"название\",\"calories\":число,\"protein\":число,"
-                "\"fat\":число,\"carbs\":число}]} "
-                "Дай 3-5 подходящих вариантов. Все числа целые."
+                "Дай точные данные КЖБУ на 100г для найденных продуктов. "
+                "Отвечай СТРОГО только JSON без лишнего текста: "
+                "{\"results\": [{\"name\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число}]} "
+                "Дай 3-5 вариантов. Все числа целые."
             )
             result = await call_groq_json(search_prompt, "Найди продукт: " + text)
-            items = result.get("results", [])
+            items  = result.get("results", [])
             if not items:
                 await update.message.reply_text("Ничего не найдено. Попробуй написать иначе.")
                 return
-            keyboard = []
+            keyboard  = []
             resp_text = "Найдено по запросу '" + text + "':\n\n"
             for item in items[:5]:
                 resp_text += (
@@ -503,15 +550,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "  100г: " + str(item["calories"]) + " ккал | "
                     "Б:" + str(item["protein"]) + "г Ж:" + str(item["fat"]) + "г У:" + str(item["carbs"]) + "г\n\n"
                 )
-                short_name = item["name"][:30]
-                keyboard.append([InlineKeyboardButton(item["name"], callback_data="search_add_" + short_name)])
-                get_custom_foods(uid)["_search_" + short_name] = item
+                short = item["name"][:30]
+                keyboard.append([InlineKeyboardButton(item["name"], callback_data="search_add_" + short)])
+                get_custom_foods(uid)["_search_" + short] = item
             resp_text += "Нажми на продукт чтобы добавить:"
             await update.message.reply_text(resp_text, reply_markup=InlineKeyboardMarkup(keyboard))
         except Exception as e:
             await update.message.reply_text("Ошибка поиска: " + str(e))
         return
-
+ 
+    # Штрихкод
     if state == "wait_barcode":
         barcode = text.strip().replace(" ", "")
         if barcode.isdigit() and len(barcode) >= 8:
@@ -522,7 +570,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if result:
                     add_meal(uid, dict(result))
                     context.user_data["last_meal"] = result
-                    await update.message.reply_text(format_meal_added(result, uid), reply_markup=add_food_keyboard())
+                    await update.message.reply_text(format_meal_added(result, uid), reply_markup=action_keyboard())
                 else:
                     await update.message.reply_text(
                         "Продукт не найден в базе.\n\n"
@@ -531,9 +579,80 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await update.message.reply_text("Ошибка поиска: " + str(e))
         else:
-            await update.message.reply_text("Введи только цифры штрихкода, например: 4607086563126")
+            await update.message.reply_text(
+                "Штрихкод должен содержать только цифры (8-13 знаков).\n\n"
+                "Пример: 4607086563126"
+            )
         return
-
+ 
+    # Своё блюдо — шаг 1: название
+    if state == "wait_own_name":
+        context.user_data["own_dish"] = {"name": text}
+        set_state(uid, "wait_own_kbju")
+        await update.message.reply_text(
+            "Шаг 2 из 3: Введи КЖБУ на 100г\n\n"
+            "Формат: калории | белки | жиры | углеводы\n\n"
+            "Пример: 120 | 15 | 4 | 8"
+        )
+        return
+ 
+    # Своё блюдо — шаг 2: КЖБУ
+    if state == "wait_own_kbju":
+        try:
+            parts = [p.strip() for p in text.replace(",", ".").split("|")]
+            if len(parts) < 4:
+                await update.message.reply_text(
+                    "Неверный формат!\n\n"
+                    "Введи: калории | белки | жиры | углеводы\n"
+                    "Пример: 120 | 15 | 4 | 8"
+                )
+                return
+            context.user_data["own_dish"]["per100"] = {
+                "calories": int(float(parts[0])),
+                "protein":  round(float(parts[1]), 1),
+                "fat":      round(float(parts[2]), 1),
+                "carbs":    round(float(parts[3]), 1),
+            }
+            set_state(uid, "wait_own_weight")
+            per = context.user_data["own_dish"]["per100"]
+            await update.message.reply_text(
+                "Шаг 3 из 3: Сколько граммов съел?\n\n"
+                "На 100г: " + str(per["calories"]) + " ккал | "
+                "Б:" + str(per["protein"]) + "г Ж:" + str(per["fat"]) + "г У:" + str(per["carbs"]) + "г\n\n"
+                "Введи граммы:"
+            )
+        except Exception:
+            await update.message.reply_text(
+                "Ошибка! Проверь формат.\n"
+                "Пример: 120 | 15 | 4 | 8"
+            )
+        return
+ 
+    # Своё блюдо — шаг 3: граммы
+    if state == "wait_own_weight":
+        try:
+            grams  = int(text.replace("г", "").replace("g", "").strip())
+            own    = context.user_data.get("own_dish", {})
+            per    = own.get("per100", {})
+            factor = grams / 100
+            meal = {
+                "dish":     own["name"] + " " + str(grams) + "г",
+                "calories": int(per["calories"] * factor),
+                "protein":  round(per["protein"] * factor, 1),
+                "fat":      round(per["fat"] * factor, 1),
+                "carbs":    round(per["carbs"] * factor, 1),
+                "weight":   grams,
+                "comment":  ""
+            }
+            add_meal(uid, meal)
+            context.user_data["last_meal"] = meal
+            clear_state(uid)
+            await update.message.reply_text(format_meal_added(meal, uid), reply_markup=action_keyboard())
+        except Exception:
+            await update.message.reply_text("Введи количество граммов цифрой, например: 250")
+        return
+ 
+    # Исправление калорий
     if state == "wait_edit_calories":
         clear_state(uid)
         try:
@@ -559,13 +678,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("Введи число! Например: 178")
         return
-
+ 
+    # Вес для продукта из поиска
     if state and state.startswith("wait_weight_search_"):
         name = state[19:]
         clear_state(uid)
         try:
-            grams = int(text.replace("г", "").replace("g", "").strip())
-            food  = get_custom_foods(uid).get("_search_" + name)
+            grams  = int(text.replace("г", "").replace("g", "").strip())
+            food   = get_custom_foods(uid).get("_search_" + name)
             if not food:
                 await update.message.reply_text("Продукт не найден.")
                 return
@@ -582,15 +702,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_meal(uid, meal)
             await update.message.reply_text(format_meal_added(meal, uid))
         except Exception:
-            await update.message.reply_text("Напиши количество граммов цифрой, например: 150")
+            await update.message.reply_text("Введи количество граммов цифрой, например: 150")
         return
-
+ 
+    # Вес для своего продукта
     if state and state.startswith("wait_weight_custom_"):
         name = state[19:]
         clear_state(uid)
         try:
-            grams = int(text.replace("г", "").replace("g", "").strip())
-            food  = get_custom_foods(uid).get(name)
+            grams  = int(text.replace("г", "").replace("g", "").strip())
+            food   = get_custom_foods(uid).get(name)
             if not food:
                 await update.message.reply_text("Продукт не найден.")
                 return
@@ -607,9 +728,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_meal(uid, meal)
             await update.message.reply_text(format_meal_added(meal, uid))
         except Exception:
-            await update.message.reply_text("Напиши количество граммов цифрой, например: 150")
+            await update.message.reply_text("Введи количество граммов цифрой, например: 150")
         return
-
+ 
+    # Новый продукт
     if state == "wait_new_food":
         clear_state(uid)
         try:
@@ -640,7 +762,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Ошибка! Проверь формат и попробуй снова.")
         return
-
+ 
+    # Избранное
     if state == "wait_add_fav":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -656,7 +779,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text("Ошибка: " + str(e))
         return
-
+ 
     # Обычный вопрос про питание
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
@@ -664,21 +787,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text("Ошибка: " + str(e))
-
+ 
 # =============================================
 # ДНЕВНИК
 # =============================================
-
+ 
 async def diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     total, meals = get_daily_total(uid)
     profile = get_profile(uid)
     target  = profile.get("target_calories", 0)
-
     if not meals:
         await update.message.reply_text("Дневник пуст!\n\nДобавь еду через /add")
         return
-
     text = "Дневник питания — сегодня:\n\n"
     for i, m in enumerate(meals, 1):
         text += (
@@ -689,9 +810,9 @@ async def diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += (
         "ИТОГО:\n"
         "Калории: " + str(total["calories"]) + " ккал\n"
-        "Белки: " + str(total["protein"]) + " г\n"
-        "Жиры: " + str(total["fat"]) + " г\n"
-        "Углеводы: " + str(total["carbs"]) + " г\n"
+        "Белки:   " + str(total["protein"]) + " г\n"
+        "Жиры:    " + str(total["fat"]) + " г\n"
+        "Углеводы:" + str(total["carbs"]) + " г\n"
     )
     if target:
         remains = target - total["calories"]
@@ -699,9 +820,8 @@ async def diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "\nОсталось: " + str(remains) + " ккал из " + str(target)
         else:
             text += "\nПревышение на " + str(abs(remains)) + " ккал!"
-
     await send(update, text)
-
+ 
 async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in user_diary or not user_diary[uid]:
@@ -712,36 +832,32 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_cal = sum(m.get("calories", 0) for m in meals)
         text += date + ": " + str(total_cal) + " ккал (" + str(len(meals)) + " приёмов)\n"
     await send(update, text)
-
+ 
 async def clear_diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     today = datetime.now().strftime("%Y-%m-%d")
     if uid in user_diary and today in user_diary[uid]:
         user_diary[uid][today] = []
     await update.message.reply_text("Дневник за сегодня очищен!")
-
+ 
 # =============================================
 # ИЗБРАННОЕ
 # =============================================
-
+ 
 async def favorites_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid       = update.effective_user.id
     favorites = get_favorites(uid)
     if not favorites:
-        await update.message.reply_text(
-            "Избранное пусто!\n\n"
-            "Добавь через /add_fav"
-        )
+        await update.message.reply_text("Избранное пусто!\n\nДобавь через /add_fav")
         return
     text = "Избранное:\n\n"
     for name, f in favorites.items():
         text += "⭐ " + name + " — " + str(f["calories"]) + " ккал\n"
     text += "\nИспользуй /add -> Избранное"
     await send(update, text)
-
+ 
 async def add_fav_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    set_state(uid, "wait_add_fav")
+    set_state(update.effective_user.id, "wait_add_fav")
     await update.message.reply_text(
         "Напиши что добавить в избранное:\n\n"
         "Примеры:\n"
@@ -749,11 +865,11 @@ async def add_fav_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "куриная грудка с гречкой\n"
         "творог 200г"
     )
-
+ 
 # =============================================
 # СВОИ ПРОДУКТЫ
 # =============================================
-
+ 
 async def my_foods_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     customs = get_custom_foods(uid)
@@ -764,13 +880,13 @@ async def my_foods_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Мои продукты (на 100г):\n\n"
     for name, f in real.items():
         text += (
-            "🍎 " + name + "\n"
-            "   " + str(f["calories"]) + " ккал | "
+            "• " + name + "\n"
+            "  " + str(f["calories"]) + " ккал | "
             "Б:" + str(f["protein"]) + "г Ж:" + str(f["fat"]) + "г У:" + str(f["carbs"]) + "г\n\n"
         )
     text += "Используй /add -> Свои продукты"
     await send(update, text)
-
+ 
 async def new_food_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(update.effective_user.id, "wait_new_food")
     await update.message.reply_text(
@@ -780,11 +896,11 @@ async def new_food_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Пример:\n"
         "Овсянка | 350 | 13 | 6 | 60"
     )
-
+ 
 # =============================================
 # ПРОФИЛЬ
 # =============================================
-
+ 
 async def setup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Настройка профиля\n\n"
@@ -794,7 +910,7 @@ async def setup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setprofile 28 80 180 м похудеть\n\n"
         "Цель: похудеть / набрать / поддержать"
     )
-
+ 
 async def setprofile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     args = context.args
@@ -808,18 +924,15 @@ async def setprofile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile["height"] = int(args[2])
         profile["gender"] = args[3].lower()
         profile["goal"]   = " ".join(args[4:])
-
         w, h, a = profile["weight"], profile["height"], profile["age"]
-        bmr = 10*w + 6.25*h - 5*a + (5 if profile["gender"] in ["м", "m"] else -161)
+        bmr  = 10*w + 6.25*h - 5*a + (5 if profile["gender"] in ["м", "m"] else -161)
         tdee = int(bmr * 1.55)
-
         if "похудеть" in profile["goal"]:
             target, goal_text = tdee - 500, "похудение"
         elif "набрать" in profile["goal"]:
             target, goal_text = tdee + 300, "набор массы"
         else:
             target, goal_text = tdee, "поддержание"
-
         profile["target_calories"] = target
         await update.message.reply_text(
             "Профиль сохранён!\n\n"
@@ -832,7 +945,7 @@ async def setprofile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text("Ошибка: " + str(e))
-
+ 
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     profile = get_profile(uid)
@@ -854,11 +967,11 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Осталось: " + str(max(0, remains)) + " ккал\n"
         "Приёмов пищи: " + str(len(meals))
     )
-
+ 
 # =============================================
 # ЗАПУСК
 # =============================================
-
+ 
 async def post_init(app):
     await app.bot.set_my_commands([
         BotCommand("start",       "Начать"),
@@ -874,11 +987,10 @@ async def post_init(app):
         BotCommand("clear_diary", "Очистить дневник"),
         BotCommand("help",        "Все команды"),
     ])
-
+ 
 def main():
     print("Bot starting...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
-
     app.add_handler(CommandHandler("start",       start))
     app.add_handler(CommandHandler("help",        help_cmd))
     app.add_handler(CommandHandler("add",         add_cmd))
@@ -895,10 +1007,9 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
     print("Bot started!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
+ 
 if __name__ == "__main__":
     main()
-
+ 
