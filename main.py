@@ -294,12 +294,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Можно сразу с подписью — напиши что это."
         )
 
-    elif data == "add_barcode":
-        set_state(uid, "wait_barcode")
-        await query.message.reply_text(
-            "🔢 Напиши штрихкод с упаковки (цифры).\n\n"
-            "Например: 4607086563126"
-        )
+   elif data == "add_barcode":
+    set_state(uid, "wait_barcode")
+    await query.message.reply_text(
+        "🔢 Введи штрихкод с упаковки\n\n"
+        "Как найти штрихкод:\n"
+        "1. Возьми упаковку продукта\n"
+        "2. Найди полосатый рисунок (обычно сзади или снизу)\n"
+        "3. Под полосками есть цифры — введи их\n\n"
+        "Обычно это 8, 10 или 13 цифр\n"
+        "Пример: 4607086563126\n\n"
+        "Просто напиши эти цифры!"
+    )
 
     elif data == "add_text":
         set_state(uid, "wait_text_food")
