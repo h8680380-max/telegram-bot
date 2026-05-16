@@ -7,13 +7,13 @@ import json
 import base64
 import os
 from datetime import datetime, timedelta
- 
+
 TELEGRAM_TOKEN     = os.environ.get("TELEGRAM_TOKEN",     "ВСТАВЬ_СЮДА")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "ВСТАВЬ_СЮДА")
 GROQ_API_KEY       = os.environ.get("GROQ_API_KEY",       "ВСТАВЬ_СЮДА")
- 
+
 groq_client = Groq(api_key=GROQ_API_KEY)
- 
+
 # =============================================
 # ДАННЫЕ
 # =============================================
@@ -23,7 +23,7 @@ user_custom    = {}
 user_favorites = {}
 user_state     = {}
 pending_photo  = {}
- 
+
 def get_profile(uid):
     if uid not in user_profiles:
         user_profiles[uid] = {
@@ -34,7 +34,7 @@ def get_profile(uid):
             "target_steps": 10000,
         }
     return user_profiles[uid]
- 
+
 def get_day(uid, date=None):
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
@@ -42,19 +42,19 @@ def get_day(uid, date=None):
     if date not in user_diary[uid]:
         user_diary[uid][date] = {"meals": [], "water": 0, "activity": []}
     return user_diary[uid][date], date
- 
+
 def today_str():
     return datetime.now().strftime("%Y-%m-%d")
- 
+
 def get_today_meals(uid):
     day, date = get_day(uid)
     return day["meals"], date
- 
+
 def add_meal(uid, meal, date=None):
     day, _ = get_day(uid, date)
     meal["time"] = datetime.now().strftime("%H:%M")
     day["meals"].append(meal)
- 
+
 def get_daily_total(uid, date=None):
     day, _ = get_day(uid, date)
     meals = day["meals"]
@@ -68,39 +68,39 @@ def get_daily_total(uid, date=None):
     t["fat"]     = round(t["fat"], 1)
     t["carbs"]   = round(t["carbs"], 1)
     return t, meals
- 
+
 def add_water(uid, ml):
     day, _ = get_day(uid)
     day["water"] = day.get("water", 0) + ml
- 
+
 def get_water(uid, date=None):
     day, _ = get_day(uid, date)
     return day.get("water", 0)
- 
+
 def add_activity(uid, activity):
     day, _ = get_day(uid)
     day["activity"].append(activity)
- 
+
 def get_activity(uid, date=None):
     day, _ = get_day(uid, date)
     return day.get("activity", [])
- 
+
 def get_custom_foods(uid):
     if uid not in user_custom: user_custom[uid] = {}
     return user_custom[uid]
- 
+
 def get_favorites(uid):
     if uid not in user_favorites: user_favorites[uid] = {}
     return user_favorites[uid]
- 
+
 def set_state(uid, state): user_state[uid] = state
 def get_state(uid): return user_state.get(uid)
 def clear_state(uid): user_state.pop(uid, None)
- 
+
 async def send(update, text):
     for i in range(0, len(text), 4096):
         await update.message.reply_text(text[i:i+4096])
- 
+
 # =============================================
 # ПРОМПТЫ
 # =============================================
@@ -113,7 +113,7 @@ ANALYZE_PHOTO_PROMPT = (
     "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,\"weight\":число,\"comment\":\"совет 1-2 предложения\"} "
     "Все числа целые. calories обычная порция 200-800 ккал."
 )
- 
+
 ANALYZE_TEXT_PROMPT = (
     "Ты - профессиональный диетолог с 20 годами опыта. "
     "Пользователь написал что съел. Максимально точно рассчитай КЖБУ. "
@@ -124,17 +124,17 @@ ANALYZE_TEXT_PROMPT = (
     "{\"dish\":\"название\",\"calories\":число,\"protein\":число,\"fat\":число,\"carbs\":число,\"weight\":число,\"comment\":\"совет 1-2 предложения\"} "
     "Все числа целые."
 )
- 
+
 NUTRITION_PROMPT = (
     "Ты - опытный диетолог и нутрициолог. "
     "Отвечай кратко, конкретно и на языке пользователя. "
     "Давай практичные советы основанные на науке."
 )
- 
+
 # =============================================
 # ИИ ЗАПРОСЫ
 # =============================================
- 
+
 def parse_json(content):
     content = content.strip()
     if "```" in content:
@@ -148,7 +148,7 @@ def parse_json(content):
     if start != -1 and end > start:
         content = content[start:end]
     return json.loads(content)
- 
+
 def validate_meal(data):
     for k in ["dish", "calories", "protein", "fat", "carbs", "weight"]:
         if k not in data:
@@ -165,7 +165,7 @@ def validate_meal(data):
         "weight":   int(data["weight"]),
         "comment":  str(data.get("comment", ""))
     }
- 
+
 async def call_openrouter(messages, model="google/gemma-4-27b-it:free"):
     body = json.dumps({"model": model, "messages": messages, "max_tokens": 400}, ensure_ascii=False).encode("utf-8")
     req  = urllib.request.Request(
@@ -176,9 +176,9 @@ async def call_openrouter(messages, model="google/gemma-4-27b-it:free"):
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data["choices"][0]["message"]["content"]
- 
+
 FALLBACK_MODELS = ["google/gemma-4-27b-it:free", "nvidia/nemotron-nano-12b-v2-vl:free"]
- 
+
 async def call_vision(photo_b64, description):
     messages = [
         {"role": "system", "content": ANALYZE_PHOTO_PROMPT},
@@ -195,7 +195,7 @@ async def call_vision(photo_b64, description):
             except Exception:
                 pass
     raise Exception("Все модели недоступны. Попробуй позже.")
- 
+
 async def call_groq_json(prompt, user_text):
     for _ in range(3):
         try:
@@ -211,7 +211,7 @@ async def call_groq_json(prompt, user_text):
         except Exception:
             pass
     raise Exception("Не удалось распознать после 3 попыток")
- 
+
 async def lookup_barcode(barcode):
     url = "https://world.openfoodfacts.org/api/v0/product/" + barcode + ".json"
     req = urllib.request.Request(url, headers={"User-Agent": "CalorieBot/1.0"})
@@ -229,7 +229,7 @@ async def lookup_barcode(barcode):
         "carbs": round(float(n.get("carbohydrates_100g", 0) or 0), 1),
         "weight": 100, "comment": "Данные с упаковки (на 100г)"
     }
- 
+
 async def ask_nutrition(uid, question):
     profile = get_profile(uid)
     total, _ = get_daily_total(uid)
@@ -244,7 +244,7 @@ async def ask_nutrition(uid, question):
         max_tokens=800
     )
     return response.choices[0].message.content
- 
+
 def format_meal_added(result, uid):
     total, _ = get_daily_total(uid)
     profile  = get_profile(uid)
@@ -267,13 +267,13 @@ def format_meal_added(result, uid):
         else:
             text += " — превышение на " + str(abs(remains)) + " ккал!"
     return text
- 
+
 def action_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ В избранное",     callback_data="save_last_fav")],
         [InlineKeyboardButton("✏️ Исправить ккал", callback_data="edit_calories")],
     ])
- 
+
 def add_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 Фото блюда",        callback_data="add_photo")],
@@ -284,7 +284,7 @@ def add_menu_keyboard():
         [InlineKeyboardButton("⭐ Избранное",          callback_data="add_favorite")],
         [InlineKeyboardButton("🍎 Свои продукты",     callback_data="add_custom")],
     ])
- 
+
 def water_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("150 мл", callback_data="water_150"),
@@ -294,7 +294,7 @@ def water_keyboard():
          InlineKeyboardButton("500 мл", callback_data="water_500"),
          InlineKeyboardButton("✏️ Другое", callback_data="water_custom")],
     ])
- 
+
 def calendar_keyboard(offset=0):
     today = datetime.now()
     rows  = []
@@ -318,27 +318,149 @@ def calendar_keyboard(offset=0):
     if nav:
         rows.append(nav)
     return InlineKeyboardMarkup(rows)
- 
+
 # =============================================
 # КОМАНДЫ
 # =============================================
- 
+
+def goal_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔥 Похудеть",       callback_data="onb_goal_похудеть")],
+        [InlineKeyboardButton("💪 Набрать массу",  callback_data="onb_goal_набрать")],
+        [InlineKeyboardButton("⚖️ Поддержать вес", callback_data="onb_goal_поддержать")],
+    ])
+
+def activity_level_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛋️ Сидячий (офис, мало движения)",    callback_data="onb_act_1.2")],
+        [InlineKeyboardButton("🚶 Лёгкая (прогулки 1-2 раза/нед)",   callback_data="onb_act_1.375")],
+        [InlineKeyboardButton("🏃 Умеренная (тренировки 3-4 раза)",  callback_data="onb_act_1.55")],
+        [InlineKeyboardButton("🔥 Активная (тренировки 5-6 раз)",    callback_data="onb_act_1.725")],
+        [InlineKeyboardButton("⚡ Очень активная (спорт каждый день)", callback_data="onb_act_1.9")],
+    ])
+
+def gender_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👨 Мужской", callback_data="onb_gender_м")],
+        [InlineKeyboardButton("👩 Женский", callback_data="onb_gender_ж")],
+    ])
+
+def calculate_plan(profile):
+    w = profile["weight"]
+    h = profile["height"]
+    a = profile["age"]
+    g = profile["gender"]
+    act = float(profile.get("activity_level", 1.55))
+    bmr = 10*w + 6.25*h - 5*a + (5 if g in ["м","m"] else -161)
+    tdee = int(bmr * act)
+    goal = profile.get("goal", "поддержать")
+    if "похудеть" in goal:
+        calories = tdee - 500
+        protein  = int(w * 2.0)
+        fat      = int(w * 0.8)
+    elif "набрать" in goal:
+        calories = tdee + 300
+        protein  = int(w * 2.2)
+        fat      = int(w * 1.0)
+    else:
+        calories = tdee
+        protein  = int(w * 1.8)
+        fat      = int(w * 0.9)
+    carbs = int((calories - protein*4 - fat*9) / 4)
+    carbs = max(50, carbs)
+    water = int(w * 35)
+    return {
+        "calories": calories,
+        "protein":  protein,
+        "fat":      fat,
+        "carbs":    carbs,
+        "water":    water,
+        "tdee":     tdee,
+    }
+
+def goal_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Похудеть",       callback_data="onb_goal_худеть")],
+        [InlineKeyboardButton("Набрать массу",  callback_data="onb_goal_набрать")],
+        [InlineKeyboardButton("Поддержать вес", callback_data="onb_goal_поддержать")],
+    ])
+
+def activity_level_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Сидячий (офис)",          callback_data="onb_act_1.2")],
+        [InlineKeyboardButton("Легкая активность",        callback_data="onb_act_1.375")],
+        [InlineKeyboardButton("Умеренная (3-4 трен/нед)", callback_data="onb_act_1.55")],
+        [InlineKeyboardButton("Активная (5-6 трен/нед)",  callback_data="onb_act_1.725")],
+        [InlineKeyboardButton("Очень активная",           callback_data="onb_act_1.9")],
+    ])
+
+def gender_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Мужской", callback_data="onb_gender_м")],
+        [InlineKeyboardButton("Женский", callback_data="onb_gender_ж")],
+    ])
+
+def calculate_plan(profile):
+    w   = profile["weight"]
+    h   = profile["height"]
+    a   = profile["age"]
+    g   = profile["gender"]
+    act = float(profile.get("activity_level", 1.55))
+    bmr  = 10*w + 6.25*h - 5*a + (5 if g in ["м","m"] else -161)
+    tdee = int(bmr * act)
+    goal = profile.get("goal", "поддержать")
+    if "худеть" in goal:
+        calories = tdee - 500
+        protein  = int(w * 2.0)
+        fat      = int(w * 0.8)
+    elif "набрать" in goal:
+        calories = tdee + 300
+        protein  = int(w * 2.2)
+        fat      = int(w * 1.0)
+    else:
+        calories = tdee
+        protein  = int(w * 1.8)
+        fat      = int(w * 0.9)
+    carbs = max(50, int((calories - protein*4 - fat*9) / 4))
+    water = int(w * 35)
+    return {"calories": calories, "protein": protein, "fat": fat, "carbs": carbs, "water": water, "tdee": tdee}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid  = update.effective_user.id
     name = update.effective_user.first_name
+    profile = get_profile(uid)
+
+    if profile.get("weight") and profile.get("height"):
+        total, _ = get_daily_total(uid)
+        target   = profile.get("target_calories", 0)
+        water    = get_water(uid)
+        target_w = profile.get("target_water", 2000)
+        remains  = target - total["calories"] if target else 0
+        await update.message.reply_text(
+            "Привет, " + name + "! 👋\n\n"
+            "Сегодня:\n"
+            "Калории: " + str(total["calories"]) + " / " + str(target) + " ккал\n"
+            "Осталось: " + str(max(0, remains)) + " ккал\n"
+            "Вода: " + str(water) + " / " + str(target_w) + " мл\n\n"
+            "/add — добавить еду\n"
+            "/water — отметить воду\n"
+            "/diary — дневник сегодня\n"
+            "/calendar — календарь\n"
+            "/stats — статистика\n"
+            "/help — все команды"
+        )
+        return
+
+    set_state(uid, "onb_goal")
     await update.message.reply_text(
         "Привет, " + name + "! 👋\n\n"
-        "Я помогаю следить за питанием, водой и активностью!\n\n"
-        "/add — добавить еду\n"
-        "/water — отметить воду\n"
-        "/activity — записать тренировку\n"
-        "/diary — дневник сегодня\n"
-        "/calendar — календарь питания\n"
-        "/stats — статистика за неделю\n"
-        "/setup — настроить профиль\n"
-        "/help — все команды\n\n"
-        "Или просто напиши вопрос про питание!"
+        "Я помогу считать калории, следить за питанием, водой и активностью!\n\n"
+        "Давай настроим твой персональный план.\n"
+        "Это займёт 1 минуту!\n\n"
+        "Шаг 1 из 6: Какая у тебя цель?",
+        reply_markup=goal_keyboard()
     )
- 
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ВСЕ КОМАНДЫ:\n\n"
@@ -365,15 +487,15 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/profile — мой профиль\n\n"
         "Просто напиши вопрос про питание!"
     )
- 
+
 async def add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_state(update.effective_user.id)
     await update.message.reply_text("Как добавить еду?", reply_markup=add_menu_keyboard())
- 
+
 # =============================================
 # ВОДА
 # =============================================
- 
+
 async def water_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     current = get_water(uid)
@@ -387,7 +509,7 @@ async def water_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + bar + " " + str(pct) + "%",
         reply_markup=water_keyboard()
     )
- 
+
 async def water_goal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(update.effective_user.id, "wait_water_goal")
     await update.message.reply_text(
@@ -398,11 +520,11 @@ async def water_goal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Активный образ жизни: 2500-3000 мл\n\n"
         "Просто напиши число, например: 2000"
     )
- 
+
 # =============================================
 # АКТИВНОСТЬ
 # =============================================
- 
+
 async def activity_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(update.effective_user.id, "wait_activity")
     await update.message.reply_text(
@@ -415,17 +537,17 @@ async def activity_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "велосипед 90 минут\n"
         "ходьба 60 минут"
     )
- 
+
 # =============================================
 # КАЛЕНДАРЬ
 # =============================================
- 
+
 async def calendar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Выбери день для просмотра:",
         reply_markup=calendar_keyboard(0)
     )
- 
+
 def format_day_summary(uid, date):
     day, _ = get_day(uid, date)
     meals    = day.get("meals", [])
@@ -434,22 +556,22 @@ def format_day_summary(uid, date):
     profile  = get_profile(uid)
     target   = profile.get("target_calories", 0)
     target_w = profile.get("target_water", 2000)
- 
+
     dt = datetime.strptime(date, "%Y-%m-%d")
     header = dt.strftime("%d %B %Y")
- 
+
     total = {"calories": 0, "protein": 0.0, "fat": 0.0, "carbs": 0.0}
     for m in meals:
         total["calories"] += int(m.get("calories", 0))
         total["protein"]  += float(m.get("protein", 0))
         total["fat"]      += float(m.get("fat", 0))
         total["carbs"]    += float(m.get("carbs", 0))
- 
+
     burned = sum(a.get("calories_burned", 0) for a in activity)
     net    = total["calories"] - burned
- 
+
     text = header + "\n\n"
- 
+
     if meals:
         text += "ЕДА:\n"
         for i, m in enumerate(meals, 1):
@@ -464,11 +586,11 @@ def format_day_summary(uid, date):
         text += "\nБелки: " + str(round(total["protein"], 1)) + "г | Жиры: " + str(round(total["fat"], 1)) + "г | Углеводы: " + str(round(total["carbs"], 1)) + "г\n"
     else:
         text += "Еда не записана\n"
- 
+
     text += "\nВОДА:\n"
     pct = min(100, int(water / target_w * 100)) if target_w else 0
     text += str(water) + " мл из " + str(target_w) + " мл (" + str(pct) + "%)\n"
- 
+
     if activity:
         text += "\nАКТИВНОСТЬ:\n"
         for a in activity:
@@ -480,24 +602,24 @@ def format_day_summary(uid, date):
             text += "Сожжено: " + str(burned) + " ккал | Нетто: " + str(net) + " ккал\n"
     else:
         text += "\nАктивность не записана\n"
- 
+
     return text
- 
+
 # =============================================
 # СТАТИСТИКА
 # =============================================
- 
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     profile = get_profile(uid)
     target  = profile.get("target_calories", 0)
     target_w = profile.get("target_water", 2000)
- 
+
     text = "Статистика за 7 дней:\n\n"
     total_cal = 0
     total_water = 0
     days_tracked = 0
- 
+
     for i in range(7):
         date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
         if uid in user_diary and date in user_diary[uid]:
@@ -525,7 +647,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if burned:
                     text += " (-" + str(burned) + ")"
                 text += status_water + "\n"
- 
+
     if days_tracked > 0:
         avg_cal   = int(total_cal / days_tracked)
         avg_water = int(total_water / days_tracked)
@@ -540,9 +662,9 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += "Дефицит: " + str(abs(diff)) + " ккал\n"
     else:
         text += "Нет данных. Начни записывать питание через /add"
- 
+
     await send(update, text)
- 
+
 async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in user_diary or not user_diary[uid]:
@@ -555,32 +677,79 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         water = day.get("water", 0)
         text += date + ": " + str(cal) + " ккал | вода: " + str(water) + " мл (" + str(len(meals)) + " приёмов)\n"
     await send(update, text)
- 
+
 # =============================================
 # ДНЕВНИК
 # =============================================
- 
+
 async def diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     text = format_day_summary(uid, today_str())
     await send(update, text)
- 
+
 async def clear_diary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in user_diary and today_str() in user_diary[uid]:
         user_diary[uid][today_str()] = {"meals": [], "water": 0, "activity": []}
     await update.message.reply_text("Дневник за сегодня очищен!")
- 
+
 # =============================================
 # ИНЛАЙН КНОПКИ
 # =============================================
- 
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid  = query.from_user.id
     data = query.data
- 
+
+    # Онбординг
+    if data.startswith("onb_goal_"):
+        goal = data[9:]
+        get_profile(uid)["goal"] = goal
+        set_state(uid, "onb_gender")
+        await query.message.reply_text(
+            "Шаг 2 из 6: Укажи пол:",
+            reply_markup=gender_keyboard()
+        )
+        return
+
+    if data.startswith("onb_gender_"):
+        gender = data[11:]
+        get_profile(uid)["gender"] = gender
+        set_state(uid, "onb_age")
+        await query.message.reply_text("Шаг 3 из 6: Сколько тебе лет?\n\nНапиши цифрой, например: 25")
+        return
+
+    if data.startswith("onb_act_"):
+        level = float(data[8:])
+        profile = get_profile(uid)
+        profile["activity_level"] = level
+        plan = calculate_plan(profile)
+        profile["target_calories"] = plan["calories"]
+        profile["target_water"]    = plan["water"]
+        goal = profile.get("goal", "")
+        goal_labels = {"худеть": "Похудение", "набрать": "Набор массы", "поддержать": "Поддержание"}
+        goal_text = next((v for k, v in goal_labels.items() if k in goal), goal)
+        clear_state(uid)
+        await query.message.reply_text(
+            "Готово! Твой план 🎉\n\n"
+            "Цель: " + goal_text + "\n\n"
+            "КАЛОРИИ:\n"
+            "Норма: " + str(plan["calories"]) + " ккал/день\n"
+            "Базовый обмен: " + str(plan["tdee"]) + " ккал\n\n"
+            "БЖУ В ДЕНЬ:\n"
+            "Белки:    " + str(plan["protein"]) + " г\n"
+            "Жиры:     " + str(plan["fat"]) + " г\n"
+            "Углеводы: " + str(plan["carbs"]) + " г\n\n"
+            "ВОДА:\n"
+            "Норма: " + str(plan["water"]) + " мл/день\n\n"
+            "Всё готово! Начнём:\n"
+            "/add — добавить первый приём пищи\n"
+            "/help — все команды"
+        )
+        return
+
     # Вода
     if data.startswith("water_"):
         val = data[6:]
@@ -601,13 +770,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + bar + " " + str(pct) + "%"
         )
         return
- 
+
     # Календарь
     if data.startswith("cal_prev_") or data.startswith("cal_next_"):
         offset = int(data.split("_")[-1])
         await query.message.edit_reply_markup(reply_markup=calendar_keyboard(offset))
         return
- 
+
     if data.startswith("cal_"):
         date = data[4:]
         try:
@@ -617,12 +786,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
- 
+
     # Еда
     if data == "add_photo":
         set_state(uid, "wait_photo")
         await query.message.reply_text("📸 Отправь фото блюда!\nМожно сразу с подписью.")
- 
+
     elif data == "add_barcode":
         set_state(uid, "wait_barcode")
         await query.message.reply_text(
@@ -634,7 +803,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Обычно 8, 10 или 13 цифр\n"
             "Пример: 4607086563126"
         )
- 
+
     elif data == "add_text":
         set_state(uid, "wait_text_food")
         await query.message.reply_text(
@@ -646,7 +815,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "куриная грудка с рисом\n"
             "стакан молока 3.2%"
         )
- 
+
     elif data == "add_search":
         set_state(uid, "wait_search")
         await query.message.reply_text(
@@ -657,7 +826,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "творог 5%\n"
             "банан"
         )
- 
+
     elif data == "add_own":
         set_state(uid, "wait_own_name")
         await query.message.reply_text(
@@ -665,7 +834,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Шаг 1 из 3: Напиши название блюда\n\n"
             "Например: Борщ домашний"
         )
- 
+
     elif data == "add_favorite":
         favorites = get_favorites(uid)
         if not favorites:
@@ -675,7 +844,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for name in list(favorites.keys())[:10]:
             keyboard.append([InlineKeyboardButton(name, callback_data="fav_" + name[:40])])
         await query.message.reply_text("⭐ Выбери блюдо:", reply_markup=InlineKeyboardMarkup(keyboard))
- 
+
     elif data == "add_custom":
         customs = get_custom_foods(uid)
         real = {k: v for k, v in customs.items() if not k.startswith("_search_")}
@@ -686,7 +855,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for name in list(real.keys())[:10]:
             keyboard.append([InlineKeyboardButton(name, callback_data="custom_" + name[:40])])
         await query.message.reply_text("🍎 Выбери продукт:", reply_markup=InlineKeyboardMarkup(keyboard))
- 
+
     elif data.startswith("fav_"):
         name = data[4:]
         favorites = get_favorites(uid)
@@ -694,7 +863,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             meal = dict(favorites[name])
             add_meal(uid, meal)
             await query.message.reply_text(format_meal_added(meal, uid))
- 
+
     elif data.startswith("custom_"):
         name = data[7:]
         customs = get_custom_foods(uid)
@@ -707,12 +876,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Б:" + str(food["protein"]) + "г Ж:" + str(food["fat"]) + "г У:" + str(food["carbs"]) + "г\n\n"
                 "Сколько граммов съел?"
             )
- 
+
     elif data.startswith("search_add_"):
         name = data[11:]
         set_state(uid, "wait_weight_search_" + name)
         await query.message.reply_text("Сколько граммов " + name + " съел?")
- 
+
     elif data == "save_last_fav":
         meal = context.user_data.get("last_meal")
         if meal:
@@ -720,7 +889,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⭐ Добавлено в избранное: " + meal["dish"])
         else:
             await query.message.reply_text("Нет блюда для сохранения.")
- 
+
     elif data == "edit_calories":
         meal = context.user_data.get("last_meal")
         if meal:
@@ -732,11 +901,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.message.reply_text("Нет блюда для редактирования.")
- 
+
 # =============================================
 # ФОТО
 # =============================================
- 
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     caption = update.message.caption or ""
@@ -749,7 +918,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_photo[uid] = photo_b64
         set_state(uid, "wait_photo_desc")
         await update.message.reply_text("Фото получено! Опиши блюдо:\nНапример: борщ со сметаной")
- 
+
 async def do_analyze_photo(update, context, uid, photo_b64, description):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
@@ -766,23 +935,66 @@ async def do_analyze_photo(update, context, uid, photo_b64, description):
             "2. Добавить описание\n"
             "3. /add -> Написать что съел"
         )
- 
+
 # =============================================
 # ТЕКСТ
 # =============================================
- 
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     text  = update.message.text.strip()
     state = get_state(uid)
- 
+
+    # Онбординг — возраст
+    if state == "onb_age":
+        try:
+            age = int(text.strip())
+            if age < 10 or age > 100:
+                await update.message.reply_text("Введи реальный возраст, например: 25")
+                return
+            get_profile(uid)["age"] = age
+            set_state(uid, "onb_weight")
+            await update.message.reply_text("Шаг 4 из 6: Какой у тебя вес?\n\nНапиши в кг, например: 75")
+        except ValueError:
+            await update.message.reply_text("Введи цифру! Например: 25")
+        return
+
+    if state == "onb_weight":
+        try:
+            weight = int(text.replace("кг","").strip())
+            if weight < 30 or weight > 300:
+                await update.message.reply_text("Введи реальный вес в кг, например: 75")
+                return
+            get_profile(uid)["weight"] = weight
+            set_state(uid, "onb_height")
+            await update.message.reply_text("Шаг 5 из 6: Какой у тебя рост?\n\nНапиши в см, например: 175")
+        except ValueError:
+            await update.message.reply_text("Введи цифру! Например: 75")
+        return
+
+    if state == "onb_height":
+        try:
+            height = int(text.replace("см","").strip())
+            if height < 100 or height > 250:
+                await update.message.reply_text("Введи реальный рост в см, например: 175")
+                return
+            get_profile(uid)["height"] = height
+            set_state(uid, "onb_activity")
+            await update.message.reply_text(
+                "Шаг 6 из 6: Какой у тебя уровень активности?",
+                reply_markup=activity_level_keyboard()
+            )
+        except ValueError:
+            await update.message.reply_text("Введи цифру! Например: 175")
+        return
+
     if state == "wait_photo_desc":
         photo_b64 = pending_photo.pop(uid, None)
         if photo_b64:
             clear_state(uid)
             await do_analyze_photo(update, context, uid, photo_b64, text)
         return
- 
+
     if state == "wait_text_food":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -800,7 +1012,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "2 яйца вареных"
             )
         return
- 
+
     if state == "wait_search":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -833,7 +1045,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text("Ошибка поиска: " + str(e))
         return
- 
+
     if state == "wait_barcode":
         barcode = text.strip().replace(" ", "")
         if barcode.isdigit() and len(barcode) >= 8:
@@ -852,7 +1064,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Штрихкод — только цифры (8-13 знаков).\nПример: 4607086563126")
         return
- 
+
     if state == "wait_water_custom":
         clear_state(uid)
         try:
@@ -868,7 +1080,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Введи число мл, например: 350")
         return
- 
+
     if state == "wait_water_goal":
         clear_state(uid)
         try:
@@ -878,7 +1090,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Введи число, например: 2000")
         return
- 
+
     if state == "wait_activity":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -907,7 +1119,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text("Ошибка: " + str(e))
         return
- 
+
     if state == "wait_own_name":
         context.user_data["own_dish"] = {"name": text}
         set_state(uid, "wait_own_kbju")
@@ -917,7 +1129,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Пример: 120 | 15 | 4 | 8"
         )
         return
- 
+
     if state == "wait_own_kbju":
         try:
             parts = [p.strip() for p in text.replace(",", ".").split("|")]
@@ -941,7 +1153,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Ошибка формата. Пример: 120 | 15 | 4 | 8")
         return
- 
+
     if state == "wait_own_weight":
         try:
             grams  = int(text.replace("г", "").replace("g", "").strip())
@@ -964,7 +1176,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Введи граммы цифрой, например: 250")
         return
- 
+
     if state == "wait_edit_calories":
         clear_state(uid)
         try:
@@ -988,7 +1200,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("Введи число! Например: 178")
         return
- 
+
     if state and state.startswith("wait_weight_search_"):
         name = state[19:]
         clear_state(uid)
@@ -1012,7 +1224,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Введи граммы цифрой, например: 150")
         return
- 
+
     if state and state.startswith("wait_weight_custom_"):
         name = state[19:]
         clear_state(uid)
@@ -1036,7 +1248,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Введи граммы цифрой, например: 150")
         return
- 
+
     if state == "wait_new_food":
         clear_state(uid)
         try:
@@ -1056,7 +1268,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("Ошибка! Проверь формат.")
         return
- 
+
     if state == "wait_add_fav":
         clear_state(uid)
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -1071,7 +1283,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text("Ошибка: " + str(e))
         return
- 
+
     # Вопрос про питание
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     try:
@@ -1079,11 +1291,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send(update, reply)
     except Exception as e:
         await update.message.reply_text("Ошибка: " + str(e))
- 
+
 # =============================================
 # ИЗБРАННОЕ И ПРОДУКТЫ
 # =============================================
- 
+
 async def favorites_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     favorites = get_favorites(uid)
@@ -1095,11 +1307,11 @@ async def favorites_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "⭐ " + name + " — " + str(f["calories"]) + " ккал\n"
     text += "\nИспользуй /add -> Избранное"
     await send(update, text)
- 
+
 async def add_fav_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(update.effective_user.id, "wait_add_fav")
     await update.message.reply_text("Напиши что добавить в избранное:\n\nПримеры:\nборщ со сметаной 300г\nкуриная грудка с гречкой")
- 
+
 async def my_foods_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     customs = get_custom_foods(uid)
@@ -1112,15 +1324,15 @@ async def my_foods_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "• " + name + "\n  " + str(f["calories"]) + " ккал | Б:" + str(f["protein"]) + "г Ж:" + str(f["fat"]) + "г У:" + str(f["carbs"]) + "г\n\n"
     text += "Используй /add -> Свои продукты"
     await send(update, text)
- 
+
 async def new_food_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_state(update.effective_user.id, "wait_new_food")
     await update.message.reply_text("Добавление продукта\n\nФормат (на 100г):\nНазвание | калории | белки | жиры | углеводы\n\nПример:\nОвсянка | 350 | 13 | 6 | 60")
- 
+
 # =============================================
 # ПРОФИЛЬ
 # =============================================
- 
+
 async def setup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Настройка профиля\n\n"
@@ -1130,7 +1342,7 @@ async def setup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setprofile 28 80 180 м похудеть\n\n"
         "Цель: похудеть / набрать / поддержать"
     )
- 
+
 async def setprofile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid  = update.effective_user.id
     args = context.args
@@ -1166,7 +1378,7 @@ async def setprofile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text("Ошибка: " + str(e))
- 
+
 async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid     = update.effective_user.id
     profile = get_profile(uid)
@@ -1195,11 +1407,11 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Тренировок: " + str(len(activity)) + "\n"
         "Сожжено: " + str(burned) + " ккал"
     )
- 
+
 # =============================================
 # ЗАПУСК
 # =============================================
- 
+
 async def post_init(app):
     await app.bot.set_my_commands([
         BotCommand("start",       "Начать"),
@@ -1220,7 +1432,7 @@ async def post_init(app):
         BotCommand("clear_diary", "Очистить дневник"),
         BotCommand("help",        "Все команды"),
     ])
- 
+
 def main():
     print("Bot starting...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
@@ -1247,8 +1459,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     print("Bot started!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
- 
+
 if __name__ == "__main__":
     main()
- 
- 
