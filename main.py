@@ -484,7 +484,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new_food — создать продукт\n\n"
         "ПРОФИЛЬ:\n"
         "/setup — как настроить\n"
-        "/profile — мой профиль\n\n"
+        "/profile — мой профиль\n"
+        "/edit_profile — изменить параметры\n\n"
         "Просто напиши вопрос про питание!"
     )
 
@@ -747,6 +748,72 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Всё готово! Начнём:\n"
             "/add — добавить первый приём пищи\n"
             "/help — все команды"
+        )
+        return
+
+
+    # Редактирование профиля — кнопки
+    if data == "edit_weight":
+        set_state(uid, "edit_weight")
+        await query.message.reply_text(
+            "Введи новый вес в кг:\n"
+            "Например: 75"
+        )
+        return
+
+    if data == "edit_height":
+        set_state(uid, "edit_height")
+        await query.message.reply_text(
+            "Введи новый рост в см:\n"
+            "Например: 175"
+        )
+        return
+
+    if data == "edit_age":
+        set_state(uid, "edit_age")
+        await query.message.reply_text(
+            "Введи новый возраст:\n"
+            "Например: 28"
+        )
+        return
+
+    if data == "edit_goal":
+        await query.message.reply_text(
+            "Выбери новую цель:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔥 Похудеть",       callback_data="edit_goal_худеть")],
+                [InlineKeyboardButton("💪 Набрать массу",  callback_data="edit_goal_набрать")],
+                [InlineKeyboardButton("⚖️ Поддержать вес", callback_data="edit_goal_поддержать")],
+            ])
+        )
+        return
+
+    if data.startswith("edit_goal_"):
+        goal = data[10:]
+        profile = get_profile(uid)
+        profile["goal"] = goal
+        plan = calculate_plan(profile)
+        profile["target_calories"] = plan["calories"]
+        profile["target_water"]    = plan["water"]
+        await query.message.reply_text(
+            "Цель обновлена: " + goal + "\n"
+            "Новая норма: " + str(plan["calories"]) + " ккал/день"
+        )
+        return
+
+    if data == "edit_activity":
+        await query.message.reply_text(
+            "Выбери уровень активности:",
+            reply_markup=activity_level_keyboard()
+        )
+        return
+
+    if data == "edit_calories_target":
+        set_state(uid, "edit_calories_target")
+        await query.message.reply_text(
+            "Введи норму калорий вручную:\n"
+            "Например: 1800\n\n"
+            "Текущая норма: " + str(get_profile(uid).get("target_calories", "—")) + " ккал"
         )
         return
 
@@ -1408,6 +1475,38 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Сожжено: " + str(burned) + " ккал"
     )
 
+
+# =============================================
+# РЕДАКТИРОВАНИЕ ПРОФИЛЯ
+# =============================================
+
+def edit_profile_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚖️ Изменить вес",       callback_data="edit_weight")],
+        [InlineKeyboardButton("📏 Изменить рост",       callback_data="edit_height")],
+        [InlineKeyboardButton("🎂 Изменить возраст",    callback_data="edit_age")],
+        [InlineKeyboardButton("🎯 Изменить цель",       callback_data="edit_goal")],
+        [InlineKeyboardButton("🏃 Изменить активность", callback_data="edit_activity")],
+        [InlineKeyboardButton("🔥 Изменить норму ккал", callback_data="edit_calories_target")],
+    ])
+
+async def edit_profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid     = update.effective_user.id
+    profile = get_profile(uid)
+    if not profile.get("weight"):
+        await update.message.reply_text("Профиль не настроен. Используй /setup")
+        return
+    await update.message.reply_text(
+        "Что хочешь изменить в профиле?\n\n"
+        "Текущие данные:\n"
+        "Вес: " + str(profile.get("weight", "—")) + " кг\n"
+        "Рост: " + str(profile.get("height", "—")) + " см\n"
+        "Возраст: " + str(profile.get("age", "—")) + " лет\n"
+        "Цель: " + str(profile.get("goal", "—")) + "\n"
+        "Норма ккал: " + str(profile.get("target_calories", "—")) + " ккал\n",
+        reply_markup=edit_profile_keyboard()
+    )
+
 # =============================================
 # ЗАПУСК
 # =============================================
@@ -1428,6 +1527,7 @@ async def post_init(app):
         BotCommand("new_food",    "Создать продукт"),
         BotCommand("profile",     "Мой профиль"),
         BotCommand("setup",       "Настроить профиль"),
+        BotCommand("edit_profile", "Изменить параметры профиля"),
         BotCommand("water_goal",  "Норма воды"),
         BotCommand("clear_diary", "Очистить дневник"),
         BotCommand("help",        "Все команды"),
@@ -1452,6 +1552,7 @@ def main():
     app.add_handler(CommandHandler("my_foods",    my_foods_cmd))
     app.add_handler(CommandHandler("new_food",    new_food_cmd))
     app.add_handler(CommandHandler("setup",       setup_cmd))
+    app.add_handler(CommandHandler("edit_profile", edit_profile_cmd))
     app.add_handler(CommandHandler("setprofile",  setprofile_cmd))
     app.add_handler(CommandHandler("profile",     profile_cmd))
     app.add_handler(CallbackQueryHandler(handle_callback))
