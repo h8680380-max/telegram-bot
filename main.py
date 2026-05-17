@@ -484,8 +484,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/new_food — создать продукт\n\n"
         "ПРОФИЛЬ:\n"
         "/setup — как настроить\n"
-        "/profile — мой профиль\n"
-        "/edit_profile — изменить параметры\n\n"
+        "/profile — мой профиль\n\n"
         "Просто напиши вопрос про питание!"
     )
 
@@ -751,72 +750,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-
-    # Редактирование профиля — кнопки
-    if data == "edit_weight":
-        set_state(uid, "edit_weight")
-        await query.message.reply_text(
-            "Введи новый вес в кг:\n"
-            "Например: 75"
-        )
-        return
-
-    if data == "edit_height":
-        set_state(uid, "edit_height")
-        await query.message.reply_text(
-            "Введи новый рост в см:\n"
-            "Например: 175"
-        )
-        return
-
-    if data == "edit_age":
-        set_state(uid, "edit_age")
-        await query.message.reply_text(
-            "Введи новый возраст:\n"
-            "Например: 28"
-        )
-        return
-
-    if data == "edit_goal":
-        await query.message.reply_text(
-            "Выбери новую цель:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔥 Похудеть",       callback_data="edit_goal_худеть")],
-                [InlineKeyboardButton("💪 Набрать массу",  callback_data="edit_goal_набрать")],
-                [InlineKeyboardButton("⚖️ Поддержать вес", callback_data="edit_goal_поддержать")],
-            ])
-        )
-        return
-
-    if data.startswith("edit_goal_"):
-        goal = data[10:]
-        profile = get_profile(uid)
-        profile["goal"] = goal
-        plan = calculate_plan(profile)
-        profile["target_calories"] = plan["calories"]
-        profile["target_water"]    = plan["water"]
-        await query.message.reply_text(
-            "Цель обновлена: " + goal + "\n"
-            "Новая норма: " + str(plan["calories"]) + " ккал/день"
-        )
-        return
-
-    if data == "edit_activity":
-        await query.message.reply_text(
-            "Выбери уровень активности:",
-            reply_markup=activity_level_keyboard()
-        )
-        return
-
-    if data == "edit_calories_target":
-        set_state(uid, "edit_calories_target")
-        await query.message.reply_text(
-            "Введи норму калорий вручную:\n"
-            "Например: 1800\n\n"
-            "Текущая норма: " + str(get_profile(uid).get("target_calories", "—")) + " ккал"
-        )
-        return
-
     # Вода
     if data.startswith("water_"):
         val = data[6:]
@@ -948,6 +881,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = data[11:]
         set_state(uid, "wait_weight_search_" + name)
         await query.message.reply_text("Сколько граммов " + name + " съел?")
+
+    elif data.startswith("rem_toggle_"):
+        key = data[11:]
+        r = get_reminders(uid)
+        r[key] = not r[key]
+        status = "включены" if r[key] else "выключены"
+        names = {"water": "Напоминания о воде", "meals": "Напоминания о еде", "evening": "Итог дня"}
+        await query.message.edit_reply_markup(reply_markup=reminders_keyboard(uid))
+        await query.message.reply_text(names.get(key, key) + ": " + status)
+        return
 
     elif data == "save_last_fav":
         meal = context.user_data.get("last_meal")
@@ -1475,41 +1418,315 @@ async def profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Сожжено: " + str(burned) + " ккал"
     )
 
-
-# =============================================
-# РЕДАКТИРОВАНИЕ ПРОФИЛЯ
-# =============================================
-
-def edit_profile_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚖️ Изменить вес",       callback_data="edit_weight")],
-        [InlineKeyboardButton("📏 Изменить рост",       callback_data="edit_height")],
-        [InlineKeyboardButton("🎂 Изменить возраст",    callback_data="edit_age")],
-        [InlineKeyboardButton("🎯 Изменить цель",       callback_data="edit_goal")],
-        [InlineKeyboardButton("🏃 Изменить активность", callback_data="edit_activity")],
-        [InlineKeyboardButton("🔥 Изменить норму ккал", callback_data="edit_calories_target")],
-    ])
-
-async def edit_profile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid     = update.effective_user.id
-    profile = get_profile(uid)
-    if not profile.get("weight"):
-        await update.message.reply_text("Профиль не настроен. Используй /setup")
-        return
-    await update.message.reply_text(
-        "Что хочешь изменить в профиле?\n\n"
-        "Текущие данные:\n"
-        "Вес: " + str(profile.get("weight", "—")) + " кг\n"
-        "Рост: " + str(profile.get("height", "—")) + " см\n"
-        "Возраст: " + str(profile.get("age", "—")) + " лет\n"
-        "Цель: " + str(profile.get("goal", "—")) + "\n"
-        "Норма ккал: " + str(profile.get("target_calories", "—")) + " ккал\n",
-        reply_markup=edit_profile_keyboard()
-    )
-
 # =============================================
 # ЗАПУСК
 # =============================================
+
+
+# =============================================
+# НАПОМИНАНИЯ
+# =============================================
+
+user_reminders = {}  # { uid: { "water": True, "meals": True, "evening": True } }
+
+def get_reminders(uid):
+    if uid not in user_reminders:
+        user_reminders[uid] = {"water": False, "meals": False, "evening": False}
+    return user_reminders[uid]
+
+def reminders_keyboard(uid):
+    r = get_reminders(uid)
+    def icon(val): return "✅" if val else "❌"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(icon(r["water"])  + " Напоминание о воде (каждые 2 часа)",  callback_data="rem_toggle_water")],
+        [InlineKeyboardButton(icon(r["meals"])  + " Напоминание о еде (завтрак/обед/ужин)", callback_data="rem_toggle_meals")],
+        [InlineKeyboardButton(icon(r["evening"]) + " Итог дня вечером (в 21:00)",          callback_data="rem_toggle_evening")],
+    ])
+
+async def reminders_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.message.reply_text(
+        "Настройка напоминаний:\n\n"
+        "Нажми чтобы включить/выключить:",
+        reply_markup=reminders_keyboard(uid)
+    )
+
+async def send_water_reminder(context, uid, chat_id):
+    water   = get_water(uid)
+    target  = get_profile(uid).get("target_water", 2000)
+    remains = max(0, target - water)
+    if remains > 0:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Время выпить воды! 💧\n\n"
+                     "Сегодня выпито: " + str(water) + " мл\n"
+                     "Осталось: " + str(remains) + " мл\n\n"
+                     "/water — отметить воду"
+            )
+        except Exception:
+            pass
+
+async def send_meal_reminder(context, uid, chat_id, meal_name):
+    total, meals = get_daily_total(uid)
+    target = get_profile(uid).get("target_calories", 0)
+    remains = max(0, target - total["calories"]) if target else 0
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Время " + meal_name + "! 🍽️\n\n"
+                 "Съедено за день: " + str(total["calories"]) + " ккал\n"
+                 + ("Осталось: " + str(remains) + " ккал\n" if target else "") +
+                 "\n/add — добавить приём пищи"
+        )
+    except Exception:
+        pass
+
+async def send_evening_summary(context, uid, chat_id):
+    profile = get_profile(uid)
+    if not profile.get("weight"):
+        return
+    total, meals = get_daily_total(uid)
+    water   = get_water(uid)
+    target  = profile.get("target_calories", 0)
+    target_w = profile.get("target_water", 2000)
+    activity = get_activity(uid)
+    burned  = sum(a.get("calories_burned", 0) for a in activity)
+
+    if not meals and water == 0:
+        return
+
+    # Просим ИИ дать совет по итогам дня
+    try:
+        summary_prompt = (
+            "Ты - персональный диетолог. Дай краткий анализ питания за день и 2-3 конкретных совета на завтра. "
+            "Будь дружелюбным и мотивирующим. Отвечай на русском, 3-5 предложений."
+        )
+        context_text = (
+            "Съедено: " + str(total["calories"]) + " ккал (норма " + str(target) + "). "
+            "Белки: " + str(total["protein"]) + "г, жиры: " + str(total["fat"]) + "г, углеводы: " + str(total["carbs"]) + "г. "
+            "Вода: " + str(water) + " мл из " + str(target_w) + " мл. "
+            "Тренировок: " + str(len(activity)) + ". Сожжено: " + str(burned) + " ккал. "
+            "Цель пользователя: " + str(profile.get("goal", "не указана")) + "."
+        )
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": summary_prompt},
+                {"role": "user", "content": context_text}
+            ],
+            max_tokens=400
+        )
+        ai_advice = response.choices[0].message.content
+    except Exception:
+        ai_advice = ""
+
+    remains = target - total["calories"] if target else 0
+    status_cal = "✅ В норме" if target and total["calories"] <= target else ("❌ Превышение на " + str(abs(remains)) + " ккал" if target else "")
+    status_water = "✅ Норма выполнена" if water >= target_w else "❌ Не выполнена (" + str(water) + "/" + str(target_w) + " мл)"
+
+    text = (
+        "Итог дня 🌙\n\n"
+        "ПИТАНИЕ:\n"
+        "Калории: " + str(total["calories"]) + "/" + str(target) + " ккал " + status_cal + "\n"
+        "Белки: " + str(total["protein"]) + "г | Жиры: " + str(total["fat"]) + "г | Углеводы: " + str(total["carbs"]) + "г\n\n"
+        "ВОДА: " + status_water + "\n\n"
+        "АКТИВНОСТЬ:\n"
+        + (str(len(activity)) + " тренировок, сожжено " + str(burned) + " ккал\n\n" if activity else "Не записано\n\n")
+        + (ai_advice + "\n" if ai_advice else "")
+    )
+
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text)
+    except Exception:
+        pass
+
+async def schedule_reminders(context):
+    now  = datetime.now()
+    hour = now.hour
+
+    for uid, reminders in user_reminders.items():
+        profile = get_profile(uid)
+        if not profile.get("weight"):
+            continue
+
+        chat_id = uid
+
+        # Вода каждые 2 часа с 8 до 22
+        if reminders.get("water") and 8 <= hour <= 22 and hour % 2 == 0 and now.minute < 5:
+            await send_water_reminder(context, uid, chat_id)
+
+        # Еда: завтрак 8:00, обед 13:00, ужин 19:00
+        if reminders.get("meals"):
+            if hour == 8 and now.minute < 5:
+                await send_meal_reminder(context, uid, chat_id, "завтрака")
+            elif hour == 13 and now.minute < 5:
+                await send_meal_reminder(context, uid, chat_id, "обеда")
+            elif hour == 19 and now.minute < 5:
+                await send_meal_reminder(context, uid, chat_id, "ужина")
+
+        # Итог дня в 21:00
+        if reminders.get("evening") and hour == 21 and now.minute < 5:
+            await send_evening_summary(context, uid, chat_id)
+
+# =============================================
+# АНАЛИТИКА
+# =============================================
+
+async def analytics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid     = update.effective_user.id
+    profile = get_profile(uid)
+    target  = profile.get("target_calories", 0)
+    target_w = profile.get("target_water", 2000)
+
+    if uid not in user_diary or not user_diary[uid]:
+        await update.message.reply_text("Нет данных для аналитики.\n\nНачни записывать питание через /add")
+        return
+
+    days_data = []
+    for i in range(30):
+        date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        if date in user_diary.get(uid, {}):
+            day  = user_diary[uid][date]
+            meals = day.get("meals", [])
+            if meals:
+                cal   = sum(m.get("calories", 0) for m in meals)
+                prot  = sum(m.get("protein", 0) for m in meals)
+                fat   = sum(m.get("fat", 0) for m in meals)
+                carbs = sum(m.get("carbs", 0) for m in meals)
+                water = day.get("water", 0)
+                act   = day.get("activity", [])
+                burned = sum(a.get("calories_burned", 0) for a in act)
+                days_data.append({
+                    "date": date, "cal": cal, "protein": round(prot,1),
+                    "fat": round(fat,1), "carbs": round(carbs,1),
+                    "water": water, "burned": burned
+                })
+
+    if not days_data:
+        await update.message.reply_text("Недостаточно данных. Записывай питание несколько дней!")
+        return
+
+    n = len(days_data)
+    avg_cal   = int(sum(d["cal"] for d in days_data) / n)
+    avg_prot  = round(sum(d["protein"] for d in days_data) / n, 1)
+    avg_fat   = round(sum(d["fat"] for d in days_data) / n, 1)
+    avg_carbs = round(sum(d["carbs"] for d in days_data) / n, 1)
+    avg_water = int(sum(d["water"] for d in days_data) / n)
+    avg_burned = int(sum(d["burned"] for d in days_data) / n)
+
+    days_in_norm = sum(1 for d in days_data if target and d["cal"] <= target)
+    days_water   = sum(1 for d in days_data if d["water"] >= target_w)
+    days_active  = sum(1 for d in days_data if d["burned"] > 0)
+
+    max_day = max(days_data, key=lambda d: d["cal"])
+    min_day = min(days_data, key=lambda d: d["cal"])
+
+    diff_cal = avg_cal - target if target else 0
+    trend = "В дефиците" if diff_cal < -100 else ("Превышение нормы" if diff_cal > 100 else "В норме")
+
+    text = (
+        "Аналитика за " + str(n) + " дней:\n\n"
+        "СРЕДНЕЕ В ДЕНЬ:\n"
+        "Калории: " + str(avg_cal) + " ккал"
+        + (" (норма " + str(target) + ")" if target else "") + "\n"
+        "Белки: " + str(avg_prot) + "г | Жиры: " + str(avg_fat) + "г | Углеводы: " + str(avg_carbs) + "г\n"
+        "Вода: " + str(avg_water) + " мл\n"
+        "Сожжено: " + str(avg_burned) + " ккал\n\n"
+        "СОБЛЮДЕНИЕ НОРМ:\n"
+        "Калории в норме: " + str(days_in_norm) + "/" + str(n) + " дней\n"
+        "Вода выполнена: " + str(days_water) + "/" + str(n) + " дней\n"
+        "Дней с тренировкой: " + str(days_active) + "/" + str(n) + "\n\n"
+        "РЕКОРДЫ:\n"
+        "Максимум: " + str(max_day["cal"]) + " ккал (" + max_day["date"] + ")\n"
+        "Минимум: " + str(min_day["cal"]) + " ккал (" + min_day["date"] + ")\n\n"
+        "ТРЕНД: " + trend + "\n"
+    )
+
+    if diff_cal > 100 and target:
+        text += "Превышаешь норму в среднем на " + str(abs(diff_cal)) + " ккал/день\n"
+    elif diff_cal < -100 and target:
+        text += "Дефицит в среднем " + str(abs(diff_cal)) + " ккал/день\n"
+
+    # ИИ-анализ
+    try:
+        ai_prompt = (
+            "Ты - персональный диетолог. Проанализируй статистику питания за " + str(n) + " дней. "
+            "Дай 3 конкретных совета для улучшения. Будь конкретным и мотивирующим. "
+            "Отвечай на русском, 4-6 предложений."
+        )
+        ai_context = (
+            "Средние калории: " + str(avg_cal) + " (норма " + str(target) + "). "
+            "БЖУ: белки " + str(avg_prot) + "г, жиры " + str(avg_fat) + "г, углеводы " + str(avg_carbs) + "г. "
+            "Вода: " + str(avg_water) + " мл из " + str(target_w) + " мл. "
+            "Норму калорий соблюдал " + str(days_in_norm) + " из " + str(n) + " дней. "
+            "Цель: " + str(profile.get("goal", "не указана")) + "."
+        )
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": ai_prompt},
+                {"role": "user", "content": ai_context}
+            ],
+            max_tokens=500
+        )
+        text += "\nСОВЕТ ДИЕТОЛОГА:\n" + response.choices[0].message.content
+    except Exception:
+        pass
+
+    await send(update, text)
+
+async def ai_advice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+    total, meals = get_daily_total(uid)
+    profile = get_profile(uid)
+    water   = get_water(uid)
+    activity = get_activity(uid)
+    target  = profile.get("target_calories", 0)
+    target_w = profile.get("target_water", 2000)
+    burned  = sum(a.get("calories_burned", 0) for a in activity)
+
+    if not meals:
+        await update.message.reply_text(
+            "Нет данных за сегодня.\n\n"
+            "Сначала добавь еду через /add, потом попроси совет!"
+        )
+        return
+
+    try:
+        prompt = (
+            "Ты - персональный диетолог и нутрициолог. "
+            "Проанализируй питание пользователя за сегодня и дай персональные советы. "
+            "Будь конкретным, дружелюбным и мотивирующим. "
+            "Отвечай на русском."
+        )
+        ctx = (
+            "Питание за сегодня:\n"
+        )
+        for m in meals:
+            ctx += "- " + m["dish"] + ": " + str(m["calories"]) + " ккал\n"
+        ctx += (
+            "\nИтого: " + str(total["calories"]) + " ккал (норма " + str(target) + ")\n"
+            "Белки: " + str(total["protein"]) + "г, жиры: " + str(total["fat"]) + "г, углеводы: " + str(total["carbs"]) + "г\n"
+            "Вода: " + str(water) + " мл из " + str(target_w) + " мл\n"
+            "Активность: " + str(len(activity)) + " тренировок, сожжено " + str(burned) + " ккал\n"
+            "Цель: " + str(profile.get("goal", "не указана")) + "\n"
+            "\nДай анализ и 3-4 конкретных совета на сегодня и завтра."
+        )
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": ctx}
+            ],
+            max_tokens=600
+        )
+        advice = response.choices[0].message.content
+        await send(update, "Совет диетолога на сегодня:\n\n" + advice)
+    except Exception as e:
+        await update.message.reply_text("Ошибка: " + str(e))
 
 async def post_init(app):
     await app.bot.set_my_commands([
@@ -1520,6 +1737,9 @@ async def post_init(app):
         BotCommand("diary",       "Дневник сегодня"),
         BotCommand("calendar",    "Календарь питания"),
         BotCommand("stats",       "Статистика за неделю"),
+        BotCommand("analytics",   "Аналитика за месяц"),
+        BotCommand("ai_advice",   "Совет диетолога"),
+        BotCommand("reminders",   "Напоминания"),
         BotCommand("week",        "Питание за неделю"),
         BotCommand("favorites",   "Избранное"),
         BotCommand("add_fav",     "Добавить в избранное"),
@@ -1527,7 +1747,6 @@ async def post_init(app):
         BotCommand("new_food",    "Создать продукт"),
         BotCommand("profile",     "Мой профиль"),
         BotCommand("setup",       "Настроить профиль"),
-        BotCommand("edit_profile", "Изменить параметры профиля"),
         BotCommand("water_goal",  "Норма воды"),
         BotCommand("clear_diary", "Очистить дневник"),
         BotCommand("help",        "Все команды"),
@@ -1536,6 +1755,7 @@ async def post_init(app):
 def main():
     print("Bot starting...")
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    # job_queue включён по умолчанию в python-telegram-bot
     app.add_handler(CommandHandler("start",       start))
     app.add_handler(CommandHandler("help",        help_cmd))
     app.add_handler(CommandHandler("add",         add_cmd))
@@ -1552,12 +1772,18 @@ def main():
     app.add_handler(CommandHandler("my_foods",    my_foods_cmd))
     app.add_handler(CommandHandler("new_food",    new_food_cmd))
     app.add_handler(CommandHandler("setup",       setup_cmd))
-    app.add_handler(CommandHandler("edit_profile", edit_profile_cmd))
     app.add_handler(CommandHandler("setprofile",  setprofile_cmd))
     app.add_handler(CommandHandler("profile",     profile_cmd))
+    app.add_handler(CommandHandler("reminders",   reminders_cmd))
+    app.add_handler(CommandHandler("analytics",   analytics_cmd))
+    app.add_handler(CommandHandler("ai_advice",   ai_advice_cmd))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Планировщик напоминаний — каждые 5 минут
+    app.job_queue.run_repeating(schedule_reminders, interval=300, first=10)
+
     print("Bot started!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
